@@ -25,7 +25,7 @@ use SessionHandlerInterface;
 
 class Session extends Provider
 {
-    private $connection = 'blomstra.sessions';
+    private $connection = 'fof.sessions';
 
     public function __invoke(Configuration $configuration, Container $container)
     {
