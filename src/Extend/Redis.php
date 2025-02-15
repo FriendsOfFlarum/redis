@@ -24,9 +24,6 @@ class Redis implements ExtenderInterface
 {
     protected $configuration;
 
-    /**
-     * @var array|string
-     */
     public function __construct($config)
     {
         $this->configuration = Configuration::make($config);

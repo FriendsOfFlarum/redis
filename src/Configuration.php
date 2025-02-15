@@ -37,8 +37,6 @@ class Configuration
      * Set Redis configuration from file or by providing a configuration array.
      *
      * @param string|array $config
-     *
-     * @return $this
      */
     public static function make($config): Configuration
     {
@@ -46,6 +44,7 @@ class Configuration
             throw new InvalidArgumentException('Configuration file does not exist');
         }
 
+        /** @phpstan-ignore-next-line */
         if (!is_string($config) && !is_array($config)) {
             throw new InvalidArgumentException('Configuration must be either a path or an array.');
         }

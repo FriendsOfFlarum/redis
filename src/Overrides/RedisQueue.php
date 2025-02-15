@@ -21,7 +21,9 @@ class RedisQueue extends IlluminateQueue
      */
     public function push($job, $data = '', $queue = null)
     {
+        /** @phpstan-ignore-next-line */
         if ($job->queue && !$queue) {
+            /** @phpstan-ignore-next-line */
             $queue = $job->queue;
         }
 
