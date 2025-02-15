@@ -1,10 +1,11 @@
 <?php
 
 /*
- * This file is part of blomstra/flarum-redis.
+ * This file is part of fof/redis.
  *
  * Copyright (c) Bokt.
  * Copyright (c) Blomstra Ltd.
+ * Copyright (c) FriendsOfFlarum
  *
  * For the full copyright and license information, please view the LICENSE.md
  * file that was distributed with this source code.
@@ -12,9 +13,9 @@
 
 namespace FoF\Redis\Extend;
 
-use FoF\Redis\Overrides\RedisManager;
 use Flarum\Extend\ExtenderInterface;
 use Flarum\Extension\Extension;
+use FoF\Redis\Overrides\RedisManager;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Redis\Factory;
 
