@@ -152,7 +152,7 @@ Simply update the namespace used in your `extend.php` file from `Blomstra\Redis.
 ### Updating
 
 ```sh
-composer update blomstra/flarum-redis
+composer update fof/redis
 ```
 
 ### FAQ
