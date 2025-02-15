@@ -10,7 +10,7 @@ the root of your Flarum installation). See the "Set up" section below.
 Install manually with composer:
 
 ```sh
-composer require fof/redis:*
+composer require fof/redis:"*"
 ```
 
 ### Set up
@@ -144,6 +144,10 @@ return [
 ```
 
 You can read up on the meaning of these options in the [Laravel Documentation](https://laravel.com/docs/8.x/queues#redis).
+
+### Migrating from `blomstra/flarum-redis`
+
+Simply update the namespace used in your `extend.php` file from `Blomstra\Redis...` to `FoF\Redis...`
 
 ### Updating
 
