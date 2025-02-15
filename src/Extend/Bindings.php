@@ -10,9 +10,9 @@
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Extend;
+namespace FoF\Redis\Extend;
 
-use Blomstra\Redis\Overrides\RedisManager;
+use FoF\Redis\Overrides\RedisManager;
 use Flarum\Extend\ExtenderInterface;
 use Flarum\Extension\Extension;
 use Illuminate\Contracts\Container\Container;
@@ -20,7 +20,7 @@ use Illuminate\Contracts\Redis\Factory;
 
 class Bindings implements ExtenderInterface
 {
-    public function extend(Container $container, Extension $extension = null)
+    public function extend(Container $container, Extension $extension = null): void
     {
         if (!$container->has(RedisManager::class)) {
             $container->singleton(RedisManager::class, function ($app) {

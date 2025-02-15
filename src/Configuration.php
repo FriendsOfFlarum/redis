@@ -10,11 +10,11 @@
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis;
+namespace FoF\Redis;
 
-use Blomstra\Redis\Provides\Cache;
-use Blomstra\Redis\Provides\Queue;
-use Blomstra\Redis\Provides\Session;
+use FoF\Redis\Provides\Cache;
+use FoF\Redis\Provides\Queue;
+use FoF\Redis\Provides\Session;
 use Illuminate\Support\Arr;
 use InvalidArgumentException;
 

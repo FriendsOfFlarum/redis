@@ -10,10 +10,10 @@
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Provides;
+namespace FoF\Redis\Provides;
 
-use Blomstra\Redis\Configuration;
-use Blomstra\Redis\Overrides\RedisManager;
+use FoF\Redis\Configuration;
+use FoF\Redis\Overrides\RedisManager;
 use Flarum\Foundation\Event\ClearingCache;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository;

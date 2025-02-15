@@ -10,9 +10,9 @@
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Provides;
+namespace FoF\Redis\Provides;
 
-use Blomstra\Redis\Configuration;
+use FoF\Redis\Configuration;
 use Illuminate\Contracts\Container\Container;
 
 abstract class Provider

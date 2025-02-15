@@ -10,9 +10,9 @@
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Extend;
+namespace FoF\Redis\Extend;
 
-use Blomstra\Redis\Configuration;
+use FoF\Redis\Configuration;
 use Flarum\Extend\ExtenderInterface;
 use Flarum\Extension\Extension;
 use Illuminate\Contracts\Container\Container;
@@ -32,7 +32,7 @@ class Redis implements ExtenderInterface
         $this->configuration = Configuration::make($config);
     }
 
-    public function extend(Container $container, Extension $extension = null)
+    public function extend(Container $container, Extension $extension = null): void
     {
         $services = $this->configuration->enabled();
 

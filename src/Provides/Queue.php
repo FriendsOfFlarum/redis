@@ -10,11 +10,11 @@
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Provides;
+namespace FoF\Redis\Provides;
 
-use Blomstra\Redis\Configuration;
-use Blomstra\Redis\Overrides\RedisManager;
-use Blomstra\Redis\Overrides\RedisQueue;
+use FoF\Redis\Configuration;
+use FoF\Redis\Overrides\RedisManager;
+use FoF\Redis\Overrides\RedisQueue;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Redis\Factory;
 use Illuminate\Support\Arr;

@@ -10,7 +10,7 @@
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Overrides;
+namespace FoF\Redis\Overrides;
 
 use Illuminate\Redis\RedisManager as IlluminateManager;
 use Illuminate\Support\Arr;
