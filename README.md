@@ -116,7 +116,7 @@ return [
 #### Queue
 
 Make sure to start your queue workers, see 
-the [laravel documentation](https://laravel.com/docs/8.x/queues#running-the-queue-worker) for specifics. 
+the [laravel documentation](https://laravel.com/docs/11.x/queues#running-the-queue-worker) for specifics. 
 To test the worker can start use `php flarum queue:work`.
 
 ##### Queue options
@@ -143,7 +143,7 @@ return [
 ];
 ```
 
-You can read up on the meaning of these options in the [Laravel Documentation](https://laravel.com/docs/8.x/queues#redis).
+You can read up on the meaning of these options in the [Laravel Documentation](https://laravel.com/docs/11.x/queues#redis).
 
 ### Migrating from `blomstra/flarum-redis`
 

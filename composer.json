@@ -24,9 +24,9 @@
         }
     ],
     "require": {
-        "flarum/core": "^1.0.0",
-        "illuminate/redis": "*",
-        "predis/predis": "*"
+        "flarum/core": "2.x-dev",
+        "illuminate/redis": "^11.42",
+        "predis/predis": "^v2.3.0"
     },
     "autoload": {
         "psr-4": {
@@ -34,7 +34,7 @@
         }
     },
     "require-dev": {
-        "flarum/phpstan": "*"
+        "flarum/phpstan": "2.x-dev"
     },
     "scripts": {
         "analyse:phpstan": "phpstan analyse",
@@ -42,5 +42,6 @@
     },
     "scripts-descriptions": {
         "analyse:phpstan": "Run static analysis"
-    }
+    },
+    "minimum-stability": "dev"
 }
