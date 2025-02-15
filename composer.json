@@ -23,6 +23,11 @@
             "url": "https://opencollective.com/fof/donate"
         }
     ],
+    "extra": {
+        "branch-alais": {
+            "1.x": "1.x-dev"
+        }
+    },
     "require": {
         "flarum/core": "^1.0.0",
         "illuminate/redis": "*",
