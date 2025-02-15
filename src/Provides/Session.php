@@ -1,20 +1,21 @@
 <?php
 
 /*
- * This file is part of blomstra/flarum-redis.
+ * This file is part of fof/redis.
  *
  * Copyright (c) Bokt.
  * Copyright (c) Blomstra Ltd.
+ * Copyright (c) FriendsOfFlarum
  *
  * For the full copyright and license information, please view the LICENSE.md
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Provides;
+namespace FoF\Redis\Provides;
 
-use Blomstra\Redis\Configuration;
-use Blomstra\Redis\Overrides\RedisManager;
-use Blomstra\Redis\Session\RedisSessionHandler;
+use FoF\Redis\Configuration;
+use FoF\Redis\Overrides\RedisManager;
+use FoF\Redis\Session\RedisSessionHandler;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Config\Repository;
@@ -25,7 +26,7 @@ use SessionHandlerInterface;
 
 class Session extends Provider
 {
-    private $connection = 'blomstra.sessions';
+    private $connection = 'fof.sessions';
 
     public function __invoke(Configuration $configuration, Container $container)
     {

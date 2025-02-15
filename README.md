@@ -10,7 +10,7 @@ the root of your Flarum installation). See the "Set up" section below.
 Install manually with composer:
 
 ```sh
-composer require blomstra/flarum-redis:*
+composer require fof/redis:"*"
 ```
 
 ### Set up
@@ -19,7 +19,7 @@ In your `extend.php`:
 
 ```php
 return [
-    new Blomstra\Redis\Extend\Redis([
+    new FoF\Redis\Extend\Redis([
         'host' => '127.0.0.1',
         'password' => null,
         'port' => 6379,
@@ -39,7 +39,7 @@ This enables sessions, cache and queue to run on redis.
 
 ```php
 return [
-    (new Blomstra\Redis\Extend\Redis([
+    (new FoF\Redis\Extend\Redis([
         'host' => '127.0.0.1',
         'password' => null,
         'port' => 6379,
@@ -52,7 +52,7 @@ return [
 
 ```php
 return [
-    (new Blomstra\Redis\Extend\Redis([
+    (new FoF\Redis\Extend\Redis([
         'host' => '127.0.0.1',
         'password' => null,
         'port' => 6379,
@@ -68,7 +68,7 @@ return [
 
 ```php
 return [
-    (new Blomstra\Redis\Extend\Redis([
+    (new FoF\Redis\Extend\Redis([
         'connections' => [
             'cache' => [
               'host' => 'cache.int.yoursite.com',
@@ -97,7 +97,7 @@ return [
 
 ```php
 return [
-    (new Blomstra\Redis\Extend\Redis([
+    (new FoF\Redis\Extend\Redis([
         'host' => '127.0.0.1',
         'password' => null,
         'port' => 6379,
@@ -116,7 +116,7 @@ return [
 #### Queue
 
 Make sure to start your queue workers, see 
-the [laravel documentation](https://laravel.com/docs/6.x/queues#running-the-queue-worker) for specifics. 
+the [laravel documentation](https://laravel.com/docs/8.x/queues#running-the-queue-worker) for specifics. 
 To test the worker can start use `php flarum queue:work`.
 
 ##### Queue options
@@ -126,7 +126,7 @@ by adding a `queue` array in the configuration:
 
 ```php
 return [
-    (new Blomstra\Redis\Extend\Redis([
+    (new FoF\Redis\Extend\Redis([
         'host' => '127.0.0.1',
         'password' => null,
         'port' => 6379,
@@ -145,6 +145,10 @@ return [
 
 You can read up on the meaning of these options in the [Laravel Documentation](https://laravel.com/docs/8.x/queues#redis).
 
+### Migrating from `blomstra/flarum-redis`
+
+Simply update the namespace used in your `extend.php` file from `Blomstra\Redis...` to `FoF\Redis...`
+
 ### Updating
 
 ```sh
@@ -158,11 +162,5 @@ Some code still relies on physical files being present. This includes the format
 
 ### Links
 
-- [Packagist](https://packagist.org/packages/blomstra/flarum-redis)
-- [GitHub](https://github.com/blomstra/flarum-redis)
-
----
-
-- Blomstra provides managed Flarum hosting.
-- https://blomstra.net
-- https://blomstra.community/t/ext-cache-assets
+- [Packagist](https://packagist.org/packages/fof/redis)
+- [GitHub](https://github.com/FriendsOfFlarum/redis)

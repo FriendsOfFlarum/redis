@@ -1,20 +1,21 @@
 <?php
 
 /*
- * This file is part of blomstra/flarum-redis.
+ * This file is part of fof/redis.
  *
  * Copyright (c) Bokt.
  * Copyright (c) Blomstra Ltd.
+ * Copyright (c) FriendsOfFlarum
  *
  * For the full copyright and license information, please view the LICENSE.md
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis\Extend;
+namespace FoF\Redis\Extend;
 
-use Blomstra\Redis\Configuration;
 use Flarum\Extend\ExtenderInterface;
 use Flarum\Extension\Extension;
+use FoF\Redis\Configuration;
 use Illuminate\Contracts\Container\Container;
 
 /**
@@ -24,15 +25,12 @@ class Redis implements ExtenderInterface
 {
     protected $configuration;
 
-    /**
-     * @var array|string
-     */
     public function __construct($config)
     {
         $this->configuration = Configuration::make($config);
     }
 
-    public function extend(Container $container, Extension $extension = null)
+    public function extend(Container $container, Extension $extension = null): void
     {
         $services = $this->configuration->enabled();
 

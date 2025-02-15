@@ -1,20 +1,21 @@
 <?php
 
 /*
- * This file is part of blomstra/flarum-redis.
+ * This file is part of fof/redis.
  *
  * Copyright (c) Bokt.
  * Copyright (c) Blomstra Ltd.
+ * Copyright (c) FriendsOfFlarum
  *
  * For the full copyright and license information, please view the LICENSE.md
  * file that was distributed with this source code.
  */
 
-namespace Blomstra\Redis;
+namespace FoF\Redis;
 
-use Blomstra\Redis\Provides\Cache;
-use Blomstra\Redis\Provides\Queue;
-use Blomstra\Redis\Provides\Session;
+use FoF\Redis\Provides\Cache;
+use FoF\Redis\Provides\Queue;
+use FoF\Redis\Provides\Session;
 use Illuminate\Support\Arr;
 use InvalidArgumentException;
 
@@ -37,8 +38,6 @@ class Configuration
      * Set Redis configuration from file or by providing a configuration array.
      *
      * @param string|array $config
-     *
-     * @return $this
      */
     public static function make($config): Configuration
     {
@@ -46,6 +45,7 @@ class Configuration
             throw new InvalidArgumentException('Configuration file does not exist');
         }
 
+        /** @phpstan-ignore-next-line */
         if (!is_string($config) && !is_array($config)) {
             throw new InvalidArgumentException('Configuration must be either a path or an array.');
         }

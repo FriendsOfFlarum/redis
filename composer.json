@@ -1,23 +1,28 @@
 {
-    "name": "blomstra/flarum-redis",
+    "name": "fof/redis",
     "description": "Adds Redis cache, sessions and queue to Flarum",
     "keywords": [
-        "flarum", "blomstra",
         "queue", "cache", "session", "redis"
     ],
     "license": "MIT",
     "authors": [
         {
-            "name": "Team Blomstra",
-            "email": "development@blomstra.net"
+            "name": "FriendsOfFlarum",
+            "homepage": "https://friendsofflarum.org"
         }
     ],
     "support": {
-        "issues": "https://github.com/blomstra/flarum-redis/issues",
-        "source": "https://github.com/blomstra/flarum-redis",
+        "issues": "https://github.com/FriendsOfFlarum/redis/issues",
+        "source": "https://github.com/FriendsOfFlarum/redis",
         "forum": "https://discuss.flarum.org/d/21873"
     },
-    "homepage": "https://blomstra.net",
+    "homepage": "https://friendsofflarum.org",
+    "funding": [
+        {
+            "type": "website",
+            "url": "https://opencollective.com/fof/donate"
+        }
+    ],
     "require": {
         "flarum/core": "^1.0.0",
         "illuminate/redis": "*",
@@ -25,7 +30,17 @@
     },
     "autoload": {
         "psr-4": {
-            "Blomstra\\Redis\\": "src/"
+            "FoF\\Redis\\": "src/"
         }
+    },
+    "require-dev": {
+        "flarum/phpstan": "*"
+    },
+    "scripts": {
+        "analyse:phpstan": "phpstan analyse",
+        "clear-cache:phpstan": "phpstan clear-result-cache"
+    },
+    "scripts-descriptions": {
+        "analyse:phpstan": "Run static analysis"
     }
 }
