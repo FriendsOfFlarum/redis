@@ -24,7 +24,7 @@
         }
     ],
     "extra": {
-        "branch-alais": {
+        "branch-alias": {
             "2.x": "2.x-dev"
         }
     },
