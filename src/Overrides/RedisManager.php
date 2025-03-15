@@ -18,7 +18,7 @@ use Illuminate\Support\Arr;
 
 class RedisManager extends IlluminateManager
 {
-    public function addConnection(string $name, array $config)
+    public function addConnection(string $name, array $config): self
     {
         if (Arr::get($config, 'options.replication')) {
             $this->config['clusters'][$name] = [$config];

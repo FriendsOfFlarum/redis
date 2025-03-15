@@ -23,14 +23,14 @@ use Illuminate\Contracts\Container\Container;
  */
 class Redis implements ExtenderInterface
 {
-    protected $configuration;
+    protected Configuration $configuration;
 
-    public function __construct($config)
+    public function __construct(array $config)
     {
         $this->configuration = Configuration::make($config);
     }
 
-    public function extend(Container $container, Extension $extension = null): void
+    public function extend(Container $container, ?Extension $extension = null): void
     {
         $services = $this->configuration->enabled();
 
@@ -47,13 +47,15 @@ class Redis implements ExtenderInterface
         }
     }
 
-    public function __call($name, $arguments)
+    public function __call(string $name, array $arguments): mixed
     {
         $forwarded = call_user_func_array([$this->configuration, $name], $arguments);
 
-        // Allows chaining from the extend.php so that it doesnt return the Configuration
+        // Allows chaining from extend.php so that it doesn't return the Configuration instance.
         if ($forwarded instanceof Configuration) {
             return $this;
         }
+
+        return $forwarded;
     }
 }

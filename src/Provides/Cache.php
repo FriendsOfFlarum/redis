@@ -26,9 +26,9 @@ use Illuminate\Support\Arr;
 
 class Cache extends Provider
 {
-    private $connection = 'fof.cache';
+    private string $connection = 'fof.cache';
 
-    public function __invoke(Configuration $configuration, Container $container)
+    public function __invoke(Configuration $configuration, Container $container): void
     {
         $container->resolving(Factory::class, function (Factory $manager) use ($configuration) {
             /** @var RedisManager $manager */

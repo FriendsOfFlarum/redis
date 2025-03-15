@@ -21,9 +21,9 @@ use InvalidArgumentException;
 
 class Configuration
 {
-    protected $config = [];
-    protected $databases = [];
-    protected $enabled = [
+    protected array $config = [];
+    protected array $databases = [];
+    protected array $enabled = [
         'cache'   => Cache::class,
         'queue'   => Queue::class,
         'session' => Session::class,
@@ -92,10 +92,8 @@ class Configuration
         return $this;
     }
 
-    public function disable($service): Configuration
+    public function disable(array $service): Configuration
     {
-        $service = (array) $service;
-
         Arr::forget($this->enabled, $service);
 
         return $this;
