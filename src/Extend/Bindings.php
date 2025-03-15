@@ -21,7 +21,7 @@ use Illuminate\Contracts\Redis\Factory;
 
 class Bindings implements ExtenderInterface
 {
-    public function extend(Container $container, Extension $extension = null): void
+    public function extend(Container $container, ?Extension $extension = null): void
     {
         if (!$container->has(RedisManager::class)) {
             $container->singleton(RedisManager::class, function ($app) {

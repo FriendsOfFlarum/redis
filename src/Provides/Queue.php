@@ -22,9 +22,9 @@ use Illuminate\Support\Arr;
 
 class Queue extends Provider
 {
-    private $connection = 'default';
+    private string $connection = 'default';
 
-    public function __invoke(Configuration $configuration, Container $container)
+    public function __invoke(Configuration $configuration, Container $container): void
     {
         $container->resolving(Factory::class, function (Factory $manager) use ($configuration) {
             /** @var RedisManager $manager */

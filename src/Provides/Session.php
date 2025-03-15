@@ -26,9 +26,9 @@ use SessionHandlerInterface;
 
 class Session extends Provider
 {
-    private $connection = 'fof.sessions';
+    private string $connection = 'fof.sessions';
 
-    public function __invoke(Configuration $configuration, Container $container)
+    public function __invoke(Configuration $configuration, Container $container): void
     {
         $container->resolving(Factory::class, function (Factory $manager) use ($configuration) {
             /** @var RedisManager $manager */

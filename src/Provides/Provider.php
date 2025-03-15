@@ -18,5 +18,5 @@ use Illuminate\Contracts\Container\Container;
 
 abstract class Provider
 {
-    abstract public function __invoke(Configuration $configuration, Container $container);
+    abstract public function __invoke(Configuration $configuration, Container $container): void;
 }
