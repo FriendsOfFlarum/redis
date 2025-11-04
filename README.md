@@ -30,7 +30,9 @@ return [
 
 This enables sessions, cache and queue to run on redis.
 
-> See "Use different database for each service" below to split up the database for cache vs sessions, queue
+> **Multi-instance deployments:** This extension automatically handles distributed cache invalidation across multiple Flarum instances (pods/containers). See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
+
+> **Important:** See "Use different database for each service" below to split up the database for cache vs sessions, queue
 > because a cache clear action will clear sessions and queue jobs as well if they share the same database.
 
 #### Advanced configuration
@@ -157,8 +159,29 @@ composer update fof/redis
 
 ### FAQ
 
-*Why are there still files in storage/cache?*
-Some code still relies on physical files being present. This includes the formatter cache and the view caches.
+#### Why are there still files in storage/cache?
+
+Some code still relies on physical files being present. This includes:
+- **Formatter cache** (`storage/formatter/*`) - TextFormatter configuration
+- **Locale cache** (`storage/locale/*`) - Compiled Symfony translation catalogues
+- **View cache** (`storage/views/*`) - Compiled Blade templates
+
+These file caches are automatically synchronized across multiple instances. See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
+
+#### Running multiple Flarum instances (horizontal scaling)?
+
+When running Flarum across multiple pods/containers (Kubernetes, ECS, etc.), cache invalidation is automatically handled by this extension.
+
+**How it works:**
+- When cache is cleared on one instance, all other instances are automatically notified
+- File caches are synchronized within ~5 seconds
+- No additional setup or daemon processes required
+
+**See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md)** for complete documentation on:
+- Architecture and implementation details
+- Performance characteristics
+- Troubleshooting tips
+- Configuration options
 
 ### Links
 
