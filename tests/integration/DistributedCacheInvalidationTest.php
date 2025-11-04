@@ -24,7 +24,7 @@ use Illuminate\Contracts\Redis\Factory;
 class DistributedCacheInvalidationTest extends TestCase
 {
     /**
-     * Configure Redis for tests
+     * Configure Redis for tests.
      */
     protected function setUp(): void
     {
@@ -33,9 +33,9 @@ class DistributedCacheInvalidationTest extends TestCase
         // Configure Redis connection for tests
         $this->extend(
             new RedisExtender([
-                'host' => getenv('REDIS_HOST') ?: '127.0.0.1',
+                'host'     => getenv('REDIS_HOST') ?: '127.0.0.1',
                 'password' => getenv('REDIS_PASSWORD') ?: null,
-                'port' => getenv('REDIS_PORT') ?: 6379,
+                'port'     => getenv('REDIS_PORT') ?: 6379,
                 'database' => 15, // Use separate database for tests
             ])
         );
@@ -73,11 +73,11 @@ class DistributedCacheInvalidationTest extends TestCase
 
             // Predis returns a Status object that can be cast to string
             $this->assertTrue(
-                (string)$result === 'PONG' || $result === true,
+                (string) $result === 'PONG' || $result === true,
                 'Redis connection should respond to PING'
             );
         } catch (\Exception $e) {
-            $this->markTestSkipped('Redis is not available: ' . $e->getMessage());
+            $this->markTestSkipped('Redis is not available: '.$e->getMessage());
         }
     }
 
@@ -102,7 +102,7 @@ class DistributedCacheInvalidationTest extends TestCase
         $versionAfter = $redis->connection('fof.cache')->get('flarum:cache:version');
         $this->assertNotNull($versionAfter, 'Version key should be set after cache clear');
         $this->assertIsNumeric($versionAfter, 'Version should be a numeric timestamp');
-        $this->assertGreaterThan(0, (int)$versionAfter, 'Version should be positive');
+        $this->assertGreaterThan(0, (int) $versionAfter, 'Version should be positive');
     }
 
     /**
@@ -136,7 +136,7 @@ class DistributedCacheInvalidationTest extends TestCase
 
         // Verify version was updated in Redis
         $currentVersion = $redis->connection('fof.cache')->get('flarum:cache:version');
-        $this->assertEquals($newVersion, (int)$currentVersion);
+        $this->assertEquals($newVersion, (int) $currentVersion);
     }
 
     /**
@@ -151,9 +151,9 @@ class DistributedCacheInvalidationTest extends TestCase
         $middleware = $this->app()->getContainer()->make(DistributedCacheInvalidation::class);
 
         // Create test cache files
-        $formatterCache = $paths->storage . '/formatter';
-        $localeCache = $paths->storage . '/locale';
-        $viewsCache = $paths->storage . '/views';
+        $formatterCache = $paths->storage.'/formatter';
+        $localeCache = $paths->storage.'/locale';
+        $viewsCache = $paths->storage.'/views';
 
         // Ensure directories exist
         @mkdir($formatterCache, 0755, true);
@@ -161,14 +161,14 @@ class DistributedCacheInvalidationTest extends TestCase
         @mkdir($viewsCache, 0755, true);
 
         // Create test files
-        file_put_contents($formatterCache . '/test.php', '<?php // test');
-        file_put_contents($localeCache . '/en.php', '<?php return [];');
-        file_put_contents($viewsCache . '/test.blade.php', '<html></html>');
+        file_put_contents($formatterCache.'/test.php', '<?php // test');
+        file_put_contents($localeCache.'/en.php', '<?php return [];');
+        file_put_contents($viewsCache.'/test.blade.php', '<html></html>');
 
         // Verify files exist
-        $this->assertFileExists($formatterCache . '/test.php');
-        $this->assertFileExists($localeCache . '/en.php');
-        $this->assertFileExists($viewsCache . '/test.blade.php');
+        $this->assertFileExists($formatterCache.'/test.php');
+        $this->assertFileExists($localeCache.'/en.php');
+        $this->assertFileExists($viewsCache.'/test.blade.php');
 
         // Set a cache version in Redis
         $redis->connection('fof.cache')->set('flarum:cache:version', time());
@@ -188,9 +188,9 @@ class DistributedCacheInvalidationTest extends TestCase
         $invalidateMethod->invoke($middleware);
 
         // Files should be cleared
-        $this->assertFileDoesNotExist($formatterCache . '/test.php', 'test.php should be deleted');
-        $this->assertFileDoesNotExist($localeCache . '/en.php', 'en.php should be deleted');
-        $this->assertFileDoesNotExist($viewsCache . '/test.blade.php', 'test.blade.php should be deleted');
+        $this->assertFileDoesNotExist($formatterCache.'/test.php', 'test.php should be deleted');
+        $this->assertFileDoesNotExist($localeCache.'/en.php', 'en.php should be deleted');
+        $this->assertFileDoesNotExist($viewsCache.'/test.blade.php', 'test.blade.php should be deleted');
     }
 
     /**
@@ -246,21 +246,21 @@ class DistributedCacheInvalidationTest extends TestCase
 
         // First clear
         $events->dispatch(new ClearingCache());
-        $version1 = (int)$redis->connection('fof.cache')->get('flarum:cache:version');
+        $version1 = (int) $redis->connection('fof.cache')->get('flarum:cache:version');
 
         // Wait a moment to ensure timestamp differs
         sleep(1);
 
         // Second clear
         $events->dispatch(new ClearingCache());
-        $version2 = (int)$redis->connection('fof.cache')->get('flarum:cache:version');
+        $version2 = (int) $redis->connection('fof.cache')->get('flarum:cache:version');
 
         // Version should increase
         $this->assertGreaterThan($version1, $version2, 'Version should increase on each clear');
     }
 
     /**
-     * Helper method to skip tests if Redis is not available
+     * Helper method to skip tests if Redis is not available.
      */
     private function requiresRedis(): void
     {
@@ -270,11 +270,11 @@ class DistributedCacheInvalidationTest extends TestCase
 
             // Predis returns a Status object that can be cast to string
             // If connection fails, it returns false or throws an exception
-            if ($result === false || ((string)$result !== 'PONG' && $result !== true)) {
-                $this->markTestSkipped('Redis is not available: ping returned ' . var_export($result, true));
+            if ($result === false || ((string) $result !== 'PONG' && $result !== true)) {
+                $this->markTestSkipped('Redis is not available: ping returned '.var_export($result, true));
             }
         } catch (\Exception $e) {
-            $this->markTestSkipped('Redis is not available: ' . $e->getMessage());
+            $this->markTestSkipped('Redis is not available: '.$e->getMessage());
         }
     }
 }

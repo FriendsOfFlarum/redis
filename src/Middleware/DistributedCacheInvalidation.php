@@ -30,13 +30,15 @@ use Psr\Http\Server\RequestHandlerInterface;
 class DistributedCacheInvalidation implements MiddlewareInterface
 {
     /**
-     * Timestamp of last check (per PHP-FPM worker)
+     * Timestamp of last check (per PHP-FPM worker).
+     *
      * @var int
      */
     private static $lastCheck = 0;
 
     /**
-     * How often to check Redis for cache version changes (seconds)
+     * How often to check Redis for cache version changes (seconds).
+     *
      * @var int
      */
     private const DEFAULT_CHECK_INTERVAL = 5;
@@ -61,7 +63,7 @@ class DistributedCacheInvalidation implements MiddlewareInterface
     }
 
     /**
-     * Check if local caches should be invalidated based on global Redis version
+     * Check if local caches should be invalidated based on global Redis version.
      */
     private function shouldInvalidateLocal(): bool
     {
@@ -81,11 +83,11 @@ class DistributedCacheInvalidation implements MiddlewareInterface
 
             if ($globalVersion > $lastGlobalVersion) {
                 $lastGlobalVersion = $globalVersion;
+
                 return true;
             }
 
             return false;
-
         } catch (\Exception $e) {
             // Redis connection failed - fail gracefully
             // Don't invalidate to avoid unnecessary file operations
@@ -94,7 +96,7 @@ class DistributedCacheInvalidation implements MiddlewareInterface
     }
 
     /**
-     * Invalidate local file caches and in-memory translator catalogues
+     * Invalidate local file caches and in-memory translator catalogues.
      */
     private function invalidateLocalCaches(): void
     {
@@ -113,7 +115,6 @@ class DistributedCacheInvalidation implements MiddlewareInterface
 
             // Update local version to match global
             $this->updateLocalVersion();
-
         } catch (\Exception $e) {
             // Fail gracefully - log but don't break the request
             // In production, you might want to log this
@@ -121,7 +122,7 @@ class DistributedCacheInvalidation implements MiddlewareInterface
     }
 
     /**
-     * Update the local version tracker to match global version
+     * Update the local version tracker to match global version.
      *
      * Note: Version is tracked via static variable in shouldInvalidateLocal(),
      * so this method doesn't need to do anything. Kept for potential future use.
@@ -132,7 +133,7 @@ class DistributedCacheInvalidation implements MiddlewareInterface
     }
 
     /**
-     * Get the check interval from config
+     * Get the check interval from config.
      */
     private function getCheckInterval(): int
     {

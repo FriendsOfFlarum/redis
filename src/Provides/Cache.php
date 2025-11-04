@@ -15,7 +15,6 @@ namespace FoF\Redis\Provides;
 
 use Flarum\Foundation\Event\ClearingCache;
 use FoF\Redis\Configuration;
-use Laminas\Stratigility\MiddlewarePipe;
 use FoF\Redis\Middleware\DistributedCacheInvalidation;
 use FoF\Redis\Overrides\RedisManager;
 use Illuminate\Cache\RedisStore;
@@ -25,6 +24,7 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory;
 use Illuminate\Support\Arr;
+use Laminas\Stratigility\MiddlewarePipe;
 
 class Cache extends Provider
 {
