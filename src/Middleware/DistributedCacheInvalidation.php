@@ -117,7 +117,7 @@ class DistributedCacheInvalidation implements MiddlewareInterface
             $this->updateLocalVersion();
         } catch (\Exception $e) {
             // Fail gracefully - log but don't break the request
-            // In production, you might want to log this
+            resolve('log')->error('Failed to invalidate local caches: '.$e->getMessage());
         }
     }
 
