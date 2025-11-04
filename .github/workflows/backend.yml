@@ -53,4 +53,4 @@ jobs:
         env:
           REDIS_HOST: localhost
           REDIS_PORT: 6379
-        run: composer test:integration
+        run: composer test:setup && composer test:integration
