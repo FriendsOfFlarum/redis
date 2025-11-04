@@ -25,6 +25,19 @@ jobs:
             redis-name: 'Valkey 8'
 
     services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: flarum_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
       redis:
         image: ${{ matrix.redis-image }}
         ports:
@@ -51,6 +64,11 @@ jobs:
 
       - name: Run integration tests
         env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: flarum_test
+          DB_USERNAME: root
+          DB_PASSWORD: ''
           REDIS_HOST: localhost
           REDIS_PORT: 6379
         run: composer test:setup && composer test:integration
