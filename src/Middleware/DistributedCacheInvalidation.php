@@ -16,7 +16,6 @@ namespace FoF\Redis\Middleware;
 use Flarum\Foundation\Paths;
 use Flarum\Locale\LocaleManager;
 use Illuminate\Cache\Repository;
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory as Redis;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;

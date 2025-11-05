@@ -24,7 +24,6 @@ use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory;
 use Illuminate\Support\Arr;
-use Laminas\Stratigility\MiddlewarePipe;
 
 class Cache extends Provider
 {
