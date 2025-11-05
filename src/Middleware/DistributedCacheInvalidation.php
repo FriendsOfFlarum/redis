@@ -124,24 +124,10 @@ class DistributedCacheInvalidation implements MiddlewareInterface
             // Clear in-memory Symfony translator catalogues
             // This is crucial because Symfony caches translations in protected $catalogues array
             $locales->clearCache();
-
-            // Update local version to match global
-            $this->updateLocalVersion();
         } catch (\Exception $e) {
             // Fail gracefully - log but don't break the request
             resolve('log')->error('Failed to invalidate local caches: '.$e->getMessage());
         }
-    }
-
-    /**
-     * Update the local version tracker to match global version.
-     *
-     * Note: Version is tracked via static variable in shouldInvalidateLocal(),
-     * so this method doesn't need to do anything. Kept for potential future use.
-     */
-    private function updateLocalVersion(): void
-    {
-        // No-op: static variable in shouldInvalidateLocal() already updated
     }
 
     /**
