@@ -72,24 +72,12 @@ class Cache extends Provider
             }
         });
 
-        // Register middleware for distributed cache invalidation
-        // Defer registration until middleware pipes are fully initialized
-        $container->resolving('flarum.forum.middleware', function ($pipe, Container $container) {
-            if ($pipe instanceof MiddlewarePipe) {
-                $pipe->pipe($container->make(DistributedCacheInvalidation::class));
-            }
-        });
+        foreach (['forum', 'admin', 'api'] as $fontend) {
+            $container->extend("flarum.{$fontend}.middleware", function ($existingMiddleware) {
+                $existingMiddleware[] = DistributedCacheInvalidation::class;
 
-        $container->resolving('flarum.admin.middleware', function ($pipe, Container $container) {
-            if ($pipe instanceof MiddlewarePipe) {
-                $pipe->pipe($container->make(DistributedCacheInvalidation::class));
-            }
-        });
-
-        $container->resolving('flarum.api.middleware', function ($pipe, Container $container) {
-            if ($pipe instanceof MiddlewarePipe) {
-                $pipe->pipe($container->make(DistributedCacheInvalidation::class));
-            }
-        });
+                return $existingMiddleware;
+            });
+        }
     }
 }

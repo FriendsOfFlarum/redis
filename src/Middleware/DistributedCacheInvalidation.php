@@ -15,6 +15,8 @@ namespace FoF\Redis\Middleware;
 
 use Flarum\Foundation\Paths;
 use Flarum\Locale\LocaleManager;
+use Illuminate\Cache\Repository;
+use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory as Redis;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -59,7 +61,11 @@ class DistributedCacheInvalidation implements MiddlewareInterface
             }
         }
 
-        return $handler->handle($request);
+        $response = $handler->handle($request);
+
+        // Add header to identify which pod/container served this request
+        // Useful for debugging distributed cache invalidation
+        return $response->withHeader('X-Flarum-Pod', gethostname());
     }
 
     /**
@@ -103,6 +109,13 @@ class DistributedCacheInvalidation implements MiddlewareInterface
         try {
             $paths = resolve(Paths::class);
             $locales = resolve(LocaleManager::class);
+
+            // CRITICAL: Flush FileStore cache FIRST before deleting files
+            // This prevents __PHP_Incomplete_Class__ errors with TextFormatter
+            // The FileStore contains serialized formatter objects that reference
+            // class files in storage/formatter/. We must clear the serialized cache
+            // before deleting the class files, otherwise unserialization fails.
+            (new Repository(resolve('cache.filestore')))->flush();
 
             // Clear file caches (suppress warnings if files don't exist)
             @array_map('unlink', glob($paths->storage.'/formatter/*') ?: []);

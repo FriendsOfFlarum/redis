@@ -277,4 +277,49 @@ class DistributedCacheInvalidationTest extends TestCase
             $this->markTestSkipped('Redis is not available: '.$e->getMessage());
         }
     }
+
+    /**
+     * @test
+     */
+    public function filestore_cache_is_flushed_before_deleting_files()
+    {
+        $this->requiresRedis();
+
+        $paths = $this->app()->getContainer()->make(Paths::class);
+        $redis = $this->app()->getContainer()->make(Factory::class);
+        $middleware = $this->app()->getContainer()->make(DistributedCacheInvalidation::class);
+
+        // Get the FileStore and store a test value
+        $fileStore = $this->app()->getContainer()->make('cache.filestore');
+        $fileStoreRepo = new \Illuminate\Cache\Repository($fileStore);
+
+        // Store a test formatter-like value
+        $fileStoreRepo->forever('test.formatter', 'test_value');
+
+        // Verify it's cached
+        $this->assertEquals('test_value', $fileStoreRepo->get('test.formatter'));
+
+        // Create test cache file
+        $formatterCache = $paths->storage.'/formatter';
+        @mkdir($formatterCache, 0755, true);
+        file_put_contents($formatterCache.'/test.php', '<?php // test');
+        $this->assertFileExists($formatterCache.'/test.php');
+
+        // Set cache version in Redis
+        $redis->connection('fof.cache')->set('flarum:cache:version', time());
+
+        // Use reflection to call invalidateLocalCaches
+        $reflectionClass = new \ReflectionClass($middleware);
+        $invalidateMethod = $reflectionClass->getMethod('invalidateLocalCaches');
+        $invalidateMethod->setAccessible(true);
+
+        // Call invalidation
+        $invalidateMethod->invoke($middleware);
+
+        // FileStore cache should be cleared (test.formatter should be gone)
+        $this->assertNull($fileStoreRepo->get('test.formatter'), 'FileStore cache should be flushed');
+
+        // File should be deleted
+        $this->assertFileDoesNotExist($formatterCache.'/test.php', 'Cache file should be deleted');
+    }
 }
