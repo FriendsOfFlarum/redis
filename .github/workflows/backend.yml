@@ -3,10 +3,72 @@ name: FoF Redis PHP
 on: [workflow_dispatch, push, pull_request]
 
 jobs:
-  run:
+  phpstan:
     uses: flarum/framework/.github/workflows/REUSABLE_backend.yml@1.x
     with:
       enable_backend_testing: false
       enable_phpstan: true
-
       backend_directory: .
+
+  tests:
+    name: Backend Tests (PHP ${{ matrix.php }}, ${{ matrix.redis-name }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        php: ['8.1', '8.2', '8.3', '8.4']
+        redis-image: ['redis:7-alpine', 'valkey/valkey:8-alpine']
+        include:
+          - redis-image: 'redis:7-alpine'
+            redis-name: 'Redis 7'
+          - redis-image: 'valkey/valkey:8-alpine'
+            redis-name: 'Valkey 8'
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+          MYSQL_DATABASE: flarum_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+      redis:
+        image: ${{ matrix.redis-image }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping || valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, dom, gd, json, mbstring, openssl, pdo_mysql, tokenizer, zip, redis
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run integration tests
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: flarum_test
+          DB_USERNAME: root
+          DB_PASSWORD: ''
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+        run: composer test:setup && composer test:integration

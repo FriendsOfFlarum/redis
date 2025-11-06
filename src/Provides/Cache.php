@@ -15,6 +15,7 @@ namespace FoF\Redis\Provides;
 
 use Flarum\Foundation\Event\ClearingCache;
 use FoF\Redis\Configuration;
+use FoF\Redis\Middleware\DistributedCacheInvalidation;
 use FoF\Redis\Overrides\RedisManager;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository;
@@ -54,10 +55,28 @@ class Cache extends Provider
 
         /** @var Dispatcher $events */
         $events = $container->make(Dispatcher::class);
-        $events->listen(ClearingCache::class, function (ClearingCache $_) {
+        $events->listen(ClearingCache::class, function (ClearingCache $_) use ($container) {
             // This clears the cache for the text formatter which is stored in file storage
             // this is hardcoded in core because it is autoloaded using spl.
             (new Repository(resolve('cache.filestore')))->flush();
+
+            // Set global cache version for distributed invalidation
+            // This signals other instances to invalidate their local caches
+            try {
+                /** @var RedisManager $redis */
+                $redis = $container->make(Factory::class);
+                $redis->connection($this->connection)->set('flarum:cache:version', time());
+            } catch (\Exception $e) {
+                // Fail gracefully if Redis is unavailable
+            }
         });
+
+        foreach (['forum', 'admin', 'api'] as $fontend) {
+            $container->extend("flarum.{$fontend}.middleware", function ($existingMiddleware) {
+                $existingMiddleware[] = DistributedCacheInvalidation::class;
+
+                return $existingMiddleware;
+            });
+        }
     }
 }

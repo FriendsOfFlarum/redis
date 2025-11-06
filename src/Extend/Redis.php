@@ -30,7 +30,7 @@ class Redis implements ExtenderInterface
         $this->configuration = Configuration::make($config);
     }
 
-    public function extend(Container $container, Extension $extension = null): void
+    public function extend(Container $container, ?Extension $extension = null): void
     {
         $services = $this->configuration->enabled();
 
