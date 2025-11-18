@@ -64,7 +64,7 @@ class DistributedCacheInvalidation implements MiddlewareInterface
 
         // Add header to identify which pod/container served this request
         // Useful for debugging distributed cache invalidation
-        return $response->withHeader('X-Flarum-Pod', gethostname());
+        return $response->withHeader('X-Flarum-Pod', $this->getPodId());
     }
 
     /**
@@ -73,23 +73,34 @@ class DistributedCacheInvalidation implements MiddlewareInterface
     private function shouldInvalidateLocal(): bool
     {
         try {
-            $redis = resolve(Redis::class);
-            $globalVersion = (int) $redis->connection('fof.cache')
-                ->get('flarum:cache:version');
+            $redis = $this->getRedis();
+
+            $globalVersion = (int) $redis->get('flarum:cache:version');
 
             // If no version set yet, nothing to invalidate
             if ($globalVersion === 0) {
                 return false;
             }
 
-            // Use static variable to track last seen version per PHP-FPM worker
-            // This persists across requests within the same worker process
-            static $lastGlobalVersion = 0;
+            // Each pod tracks its last seen version in Redis instead of static memory
+            $podId = $this->getPodId();
+            $lastSeenKey = "flarum:cache:version:last_seen:$podId";
 
-            if ($globalVersion > $lastGlobalVersion) {
-                $lastGlobalVersion = $globalVersion;
+            $lastSeenVersion = (int) $redis->get($lastSeenKey);
 
-                return true;
+            // If global version is newer, attempt to invalidate
+            if ($globalVersion > $lastSeenVersion) {
+
+                // Distributed lock to ensure only one worker per pod invalidates
+                $lockKey = "flarum:cache:lock:$podId";
+                $lockAcquired = $redis->set($lockKey, 1, 'NX', 'EX', 30);
+
+                if ($lockAcquired) {
+                    // Update last seen BEFORE invalidating to avoid race conditions
+                    $redis->set($lastSeenKey, $globalVersion);
+
+                    return true;
+                }
             }
 
             return false;
@@ -140,5 +151,21 @@ class DistributedCacheInvalidation implements MiddlewareInterface
 
         return $config['cache']['distributed_invalidation_interval']
             ?? self::DEFAULT_CHECK_INTERVAL;
+    }
+
+    /**
+     * Retrieve the Redis connection used for distributed cache state.
+     */
+    protected function getRedis()
+    {
+        return resolve(Redis::class)->connection('fof.cache');
+    }
+
+    /**
+     * Identify the current pod or instance handling this request.
+     */
+    protected function getPodId(): string
+    {
+        return gethostname();
     }
 }
