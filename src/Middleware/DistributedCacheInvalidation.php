@@ -90,7 +90,6 @@ class DistributedCacheInvalidation implements MiddlewareInterface
 
             // If global version is newer, attempt to invalidate
             if ($globalVersion > $lastSeenVersion) {
-
                 // Distributed lock to ensure only one worker per pod invalidates
                 $lockKey = "flarum:cache:lock:$podId";
                 $lockAcquired = $redis->set($lockKey, 1, 'NX', 'EX', 30);
