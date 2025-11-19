@@ -237,6 +237,103 @@ class DistributedCacheInvalidationTest extends TestCase
     /**
      * @test
      */
+    private function makeMiddlewareForPod(string $podId): DistributedCacheInvalidation
+    {
+        // Override getPodId() so we can simulate podA / podB / podC independently
+        return new class($podId) extends DistributedCacheInvalidation {
+            private string $podId;
+
+            public function __construct(string $podId)
+            {
+                $this->podId = $podId;
+            }
+
+            protected function getPodId(): string
+            {
+                return $this->podId;
+            }
+        };
+    }
+
+    /** @test */
+    public function multipod_pods_update_last_seen_in_redis()
+    {
+        $this->requiresRedis();
+
+        /** @var \Illuminate\Contracts\Redis\Factory $redisFactory */
+        $redisFactory = $this->app()->getContainer()->make(Factory::class);
+        $redis = $redisFactory->connection('fof.cache');
+
+        // Clean any pod-specific keys
+        $redis->del([
+            'flarum:cache:version',
+            'flarum:cache:version:last_seen:podA',
+            'flarum:cache:version:last_seen:podB',
+            'flarum:cache:lock:podA',
+            'flarum:cache:lock:podB',
+        ]);
+
+        // Initial "last seen" state
+        $redis->set('flarum:cache:version:last_seen:podA', 1000);
+        $redis->set('flarum:cache:version:last_seen:podB', 1000);
+
+        // Global version bump
+        $redis->set('flarum:cache:version', 2000);
+
+        $podA = $this->makeMiddlewareForPod('podA');
+        $podB = $this->makeMiddlewareForPod('podB');
+
+        // Use reflection to call shouldInvalidateLocal() directly
+        $ref = new \ReflectionClass($podA);
+        $shouldInvalidate = $ref->getMethod('shouldInvalidateLocal');
+        $shouldInvalidate->setAccessible(true);
+        var_dump('Pod A shouldInvalidateLocal called', $redis->get('flarum:cache:version:last_seen:podA'));
+        $this->assertTrue($shouldInvalidate->invoke($podA), 'Pod A should detect a newer version');
+        $this->assertTrue($shouldInvalidate->invoke($podB), 'Pod B should detect a newer version');
+
+        $this->assertEquals(2000, (int) $redis->get('flarum:cache:version:last_seen:podA'));
+        $this->assertEquals(2000, (int) $redis->get('flarum:cache:version:last_seen:podB'));
+    }
+
+    /** @test */
+    public function pod_does_not_invalidate_if_its_own_lock_is_held()
+    {
+        $this->requiresRedis();
+
+        $redisFactory = $this->app()->getContainer()->make(Factory::class);
+        $redis = $redisFactory->connection('fof.cache');
+
+        $redis->del([
+            'flarum:cache:version',
+            'flarum:cache:version:last_seen:podA',
+            'flarum:cache:lock:podA',
+        ]);
+
+        // Last seen and new global version
+        $redis->set('flarum:cache:version:last_seen:podA', 1000);
+        $redis->set('flarum:cache:version', 2000);
+
+        // Simulate some other worker in *the same pod* already holding the lock
+        $redis->set('flarum:cache:lock:podA', 1, 'EX', 30);
+
+        $podA = $this->makeMiddlewareForPod('podA');
+
+        $ref = new \ReflectionClass($podA);
+        $shouldInvalidate = $ref->getMethod('shouldInvalidateLocal');
+        $shouldInvalidate->setAccessible(true);
+
+        $this->assertFalse(
+            $shouldInvalidate->invoke($podA),
+            'Pod A should not invalidate if it cannot acquire its own lock'
+        );
+
+        // last_seen should not have been updated because lock acquisition failed
+        $this->assertEquals(1000, (int) $redis->get('flarum:cache:version:last_seen:podA'));
+    }
+
+    /**
+     * @test
+     */
     public function cache_version_increases_on_each_clear()
     {
         $this->requiresRedis();
