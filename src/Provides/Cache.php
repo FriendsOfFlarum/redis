@@ -15,8 +15,9 @@ namespace FoF\Redis\Provides;
 
 use Flarum\Foundation\Event\ClearingCache;
 use FoF\Redis\Configuration;
-use FoF\Redis\Middleware\DistributedCacheInvalidation;
+use FoF\Redis\Console\ListenDistributedCacheInvalidationCommand;
 use FoF\Redis\Overrides\RedisManager;
+use FoF\Redis\Service\DistributedCacheInvalidationService;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\Store;
@@ -27,10 +28,14 @@ use Illuminate\Support\Arr;
 
 class Cache extends Provider
 {
+    protected $commands = [
+        ListenDistributedCacheInvalidationCommand::class,
+    ];
     private $connection = 'fof.cache';
 
     public function __invoke(Configuration $configuration, Container $container)
     {
+        // register command
         $container->resolving(Factory::class, function (Factory $manager) use ($configuration) {
             /** @var RedisManager $manager */
             $manager->addConnection($this->connection, $configuration->toArray());
@@ -63,20 +68,16 @@ class Cache extends Provider
             // Set global cache version for distributed invalidation
             // This signals other instances to invalidate their local caches
             try {
-                /** @var RedisManager $redis */
-                $redis = $container->make(Factory::class);
-                $redis->connection($this->connection)->set('flarum:cache:version', time());
+                /** @var DistributedCacheInvalidationService  $service */
+                $service = $container->make(DistributedCacheInvalidationService::class);
+                $service->notify();
             } catch (\Exception $e) {
                 // Fail gracefully if Redis is unavailable
             }
         });
 
-        foreach (['forum', 'admin', 'api'] as $fontend) {
-            $container->extend("flarum.{$fontend}.middleware", function ($existingMiddleware) {
-                $existingMiddleware[] = DistributedCacheInvalidation::class;
-
-                return $existingMiddleware;
-            });
-        }
+        $container->extend('flarum.console.commands', function ($commands) {
+            return array_merge($this->commands, $commands);
+        });
     }
 }

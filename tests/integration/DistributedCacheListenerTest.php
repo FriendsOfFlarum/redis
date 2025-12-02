@@ -17,9 +17,10 @@ use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Foundation\Paths;
 use Flarum\Testing\integration\TestCase;
 use FoF\Redis\Extend\Redis as RedisExtender;
-use FoF\Redis\Middleware\DistributedCacheInvalidation;
+use FoF\Redis\Console\ListenDistributedCacheInvalidationCommand;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory;
+use Psr\Log\NullLogger;
 
 class DistributedCacheInvalidationTest extends TestCase
 {

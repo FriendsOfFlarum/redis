@@ -17,19 +17,19 @@ This causes missing translations, stale assets, and other cache-related issues.
 
 ### The Solution
 
-**Automatic propagation using Redis as a signal bus:**
+**Push-based invalidation with Redis Pub/Sub and per-pod listeners:**
 
 1. When cache is cleared on Pod A:
-   - Clears local Redis + file caches
-   - Sets `flarum:cache:version` = `1730793600` in Redis
+   - Core clears local Redis + file caches
+   - Sets `flarum:cache:version = 1730793600` in Redis
+   - Publishes `{ "timestamp": 1730793600 }` to the `flarum.cache.cleared` channel
 
-2. On next request to Pod B (within 5 seconds):
-   - Middleware checks `flarum:cache:version` from Redis
-   - Compares with local version (stored in APCu)
-   - If different: invalidates local file caches
-   - Updates local version
+2. Every other pod runs `php flarum cache:listen-distributed-invalidation <pod-id>` as a sidecar/daemon:
+   - Subscribes to `flarum.cache.cleared`
+   - Executes `php flarum cache:clear` locally the moment a push event is received
+   - Stores `flarum:cache:version:last_seen:<pod-id>` after each clear so dashboards/alerts can track drift
 
-3. All pods eventually consistent within 5 seconds
+3. All pods receive the event instantly (sub-millisecond in Redis) and clear their file caches within the same second.
 
 ### What Gets Invalidated
 
@@ -45,206 +45,153 @@ This causes missing translations, stale assets, and other cache-related issues.
 1. **Version Signal** (Redis)
    - Key: `flarum:cache:version`
    - Value: Unix timestamp of last cache clear
-   - Shared across all instances
+   - Updated every time `cache:clear` runs anywhere
 
-2. **Local Version Tracker** (APCu)
-   - Key: `flarum:local:cache:version`
-   - Value: Last seen global version
-   - Per PHP-FPM worker
+2. **Last-Seen Tracker** (Redis)
+   - Key: `flarum:cache:version:last_seen:<pod-id>`
+   - Records the newest version each pod has applied (purely informational now)
+   - Useful for monitoring dashboards and manual drift checks
 
-3. **Middleware** (`DistributedCacheInvalidation`)
-   - Checks version every 5 seconds (configurable)
-   - Invalidates local caches if version changed
-   - Registered on forum, admin, and API pipelines
+3. **Listener Command** (`cache:listen-distributed-invalidation`)
+   - Long-lived process per pod/container
+   - Subscribes to `flarum.cache.cleared`
+   - Runs the standard cache clear routine on push events
+   - Handles reconnection, signal-driven shutdown, and exponential-ish backoff
+
+4. **ClearingCache Hook**
+   - Core event that this extension listens to
+   - Writes the new version key and emits the Pub/Sub message in one transaction
 
 ### Performance
 
-**With default 5-second throttle:**
-- 1 Redis GET per PHP-FPM worker per 5 seconds
-- ~0.5-1ms per check
-- APCu caches the result in-memory
-- Negligible overhead: ~0.002ms per request average
-
-**Scalability example:**
-- 1000 requests/second = ~200 PHP-FPM workers
-- 200 workers / 5 seconds = 40 Redis GETs/second
-- Total overhead: ~20-40ms/second across entire fleet
+- Pub/Sub delivery inside Redis is typically <1ms
+- Each listener idles on `SUBSCRIBE` with negligible CPU usage
+- Cache clearing cost is identical to a manual `php flarum cache:clear`
+- No startup reconciliation: brand-new pods reuse their fresh cache and only react to live events
 
 ## Configuration
 
-### Optional Settings
+### Required Runtime Process
 
-Add to your `config.php`:
+Run one listener per pod/container (or per PHP-FPM host):
 
-```php
-return [
-    // ... other config
-
-    'cache' => [
-        // How often to check for cache invalidation (seconds)
-        // Default: 5
-        'distributed_invalidation_interval' => 5,
-    ],
-];
+```bash
+php flarum cache:listen-distributed-invalidation <pod-id>
 ```
 
-### Tuning the Interval
+- **`pod-id`** should be a stable identifier (e.g., Kubernetes pod name, ECS task ID). Defaults to `gethostname()` if omitted.
+- The command never exits unless a signal (SIGTERM/SIGINT) is received.
 
-- **Lower (1-2s)**: Faster propagation, more Redis load
-- **Higher (10-30s)**: Less Redis load, slower propagation
-- **Recommendation**: 5s is optimal for most deployments
+### Environment Considerations
+
+- Ensure the listener has access to the same Redis instance configured for `fof/redis`
+- Allow outbound TCP to Redis Pub/Sub ports (default 6379)
+- Provide sufficient permissions to run `php flarum cache:clear` inside the container/VM
 
 ## Requirements
 
 ### Required
 - fof/redis installed and configured
-- Redis connection available
-- Multiple Flarum instances
+- Redis connection available (data + Pub/Sub)
+- Ability to run a persistent CLI process alongside each Flarum pod
 
-### No Additional Requirements
-- Uses PHP static variables for per-worker caching
-- No special PHP extensions needed
+### Nice to Have
+- Supervisor (`systemd`, `supervisord`, s6, Kubernetes sidecar, etc.) to keep the listener alive
+- Log aggregation so listener output (success/failure) is searchable
 
 ## Backward Compatibility
 
-✅ **Single instance**: Works with tiny overhead
-✅ **No special extensions**: Uses PHP static variables
-✅ **Redis unavailable**: Fails gracefully
-✅ **Existing installs**: No migration needed
+✅ **Single instance:** listener can run locally or be skipped (no distributed benefit needed)
+✅ **Graceful degradation:** if listener is down, caches remain valid locally; restart listener to rejoin the stream
+✅ **Existing installs:** no schema or config changes—just add the long-running command to each pod spec
 
 ## Deployment
 
-### No Additional Setup Required!
-
-The feature is **automatic** when you install fof/redis:
+### Default Flow
 
 1. Install/upgrade fof/redis
-2. Clear cache: `php flarum cache:clear`
-3. ✅ Done! All instances will stay synchronized
+2. Clear cache once: `php flarum cache:clear`
+3. Launch the listener alongside every pod:
+   ```bash
+   php flarum cache:listen-distributed-invalidation forum-app-1
+   ```
+4. Repeat step 3 with distinct IDs for `forum-app-2`, `forum-app-3`, etc.
 
-### Testing
+### Keeping the Listener Running
 
-**Verify it's working:**
+- **Kubernetes:** add a sidecar container running the command; share the same volume + env as the main container
+- **VM/Bare metal:** create a `systemd` service or `supervisord` program entry; set `Restart=always`
+- **Docker Compose:** add a lightweight service referencing the same image and command entrypoint
+
+## Testing
+
+**Verify push invalidation end-to-end:**
 
 ```bash
-# On Pod A - clear cache
+# On Pod B (or locally), start the listener with a recognizable ID
+php flarum cache:listen-distributed-invalidation forum-app-2
+
+# In another terminal / Pod A, trigger a clear
 php flarum cache:clear
 
-# Check Redis has version key
-redis-cli -n 1
-> GET flarum:cache:version
-"1730793600"
+# Listener output should immediately log "Cache cleared successfully via listener."
+```
 
-# On Pod B - make a request (triggers middleware)
-curl https://your-forum.com
+**Verify restart behavior:**
 
-# Check Pod B's locale cache was cleared
-ls -la storage/locale/
-# Should be empty or regenerated
+```bash
+# Stop the listener temporarily
+CTRL+C
+
+# Trigger cache clear elsewhere
+php flarum cache:clear
+
+# Restart the listener
+php flarum cache:listen-distributed-invalidation forum-app-2
+
+# It immediately resubscribes; since no reconciliation runs, ensure listener stays online for future clears
 ```
 
 ## Troubleshooting
 
-### Cache not propagating?
+### Listener not reacting
+- Confirm the process is running (`ps aux | grep cache:listen-distributed` or supervisor UI)
+- Use `redis-cli PUBSUB CHANNELS` to ensure `flarum.cache.cleared` is active
+- Check logs for reconnection loops; increase Redis connection timeout if needed
+- Verify each pod uses a unique `pod-id` so last-seen keys are not overwritten
 
-**Check Redis connection:**
-```bash
-php flarum tinker
->>> resolve(\Illuminate\Contracts\Redis\Factory::class)->connection('fof.cache')->ping();
-```
+### Cache still stale on one pod
+- Ensure the listener has permission to execute `php flarum cache:clear`
+- Inspect `flarum:cache:version:last_seen:<pod-id>`; if it lags behind `flarum:cache:version`, restart the listener
+- Look for filesystem permission errors inside the listener logs when deleting `storage/*`
 
-
-**Check middleware is registered:**
-```bash
-# Should see DistributedCacheInvalidation in middleware stack
-php flarum list
-```
-
-### High Redis load?
-
-Increase the check interval:
-```php
-// config.php
-'cache' => [
-    'distributed_invalidation_interval' => 10, // Check every 10s instead of 5s
-],
-```
-
-### Manual invalidation for testing
-
-```php
-// Force all instances to invalidate on next request
-php flarum tinker
->>> resolve(\Illuminate\Contracts\Redis\Factory::class)->connection('fof.cache')->set('flarum:cache:version', time());
-```
+### Redis unavailable
+- Listener will back off for 5 seconds and retry continuously
+- Before resubscribing it reconciles `flarum:cache:version` with the pod’s last-seen marker so missed clears run once
+- During outages, local caches remain untouched; once Redis returns, the listener resumes and handles the next live event automatically
 
 ## Technical Details
 
-### Why Not Pub/Sub?
+### Why a dedicated listener?
 
-**Redis Pub/Sub** was considered but rejected because:
-- ❌ Requires long-running subscriber daemon process
-- ❌ Additional process management (supervisor, systemd)
-- ❌ Restart on deploy/crash recovery
-- ❌ Operational complexity
+Polling middleware added measurable latency in high-throughput deployments and still left a multi-second window for stale cache. A dedicated listener:
+- ✅ Delivers near-instant propagation via Redis Pub/Sub
+- ✅ Keeps hot paths (web requests) free of Redis round trips
+- ✅ Centralizes cache-clear logic inside the CLI process where filesystem work already happens
 
-**Polling approach** is simpler:
-- ✅ No daemons needed
-- ✅ Works automatically
-- ✅ Negligible overhead with throttling
-- ✅ Self-healing (checks on every request)
+### Version Keys as Observability
 
-### Why Static Variables?
+With startup reconciliation removed, `flarum:cache:version:last_seen:<pod-id>` now serves monitoring purposes rather than control flow. Operators can compare `flarum:cache:version` and each pod's last-seen value to confirm listeners observe events in real time.
 
-**Static variables** in PHP persist across requests within the same PHP-FPM worker process
+### Signal Handling & Shutdown
 
-- Stores "last known version" in each PHP-FPM worker's memory
-- Combined with throttling (5-second check interval), avoids checking Redis on every request
-- No external dependencies or extensions needed
-
-**Flow with throttling + static variables:**
-```
-Request 1 @ T+0s → Check Redis (1ms) → Store in static var → Continue
-Request 2 @ T+1s → Check throttle → Skip (last check was 1s ago) → Continue
-Request 3 @ T+2s → Check throttle → Skip (last check was 2s ago) → Continue
-Request 4 @ T+5s → Check throttle → Check Redis (1ms) → Update static var → Continue
-```
-
-**Benefits:**
-- Only 1 Redis check per worker per 5 seconds
-- Static variable lookups are instant (in-memory, same process)
-- Works everywhere - no extensions needed
-
-### Race Conditions?
-
-**Scenario:** Admin clears cache during high traffic
-
-**Safe because:**
-1. Event fires AFTER core finishes clearing
-2. Version signal written to Redis after local clear
-3. Other pods check version periodically
-4. Each pod clears independently (no locks needed)
-5. Worst case: Request sees stale cache for up to 5 seconds
-
-**Not a problem because:**
-- Cache clears are infrequent (admin operations)
-- 5-second delay is acceptable
-- Eventually consistent is sufficient
+- Uses `pcntl_signal()` (when available) to intercept `SIGTERM`/`SIGINT`
+- On shutdown request, disconnects from Redis gracefully to exit the `SUBSCRIBE` loop
+- Process managers can rely on normal exit semantics for rolling deploys
 
 ## Future Improvements
 
-Possible enhancements (not currently needed):
-
-- [ ] Metrics/monitoring for cache propagation
-- [ ] Admin UI indicator showing last sync time
-- [ ] Optional immediate invalidation via Realtime WebSocket
-- [ ] Selective invalidation (only specific cache types)
-
-## Credits
-
-Developed to solve distributed cache coherency issues in horizontally scaled Flarum deployments running on Kubernetes/ECS.
-
-**Architecture inspired by:**
-- Laravel's `queue:restart` command (uses same polling pattern)
-- Symfony's cache tagging system
-- Redis as a shared coordination layer
+- [ ] Metrics endpoint exposing last-seen version per pod
+- [ ] Health check that ensures listener last cleared within N seconds (based on last-seen)
+- [ ] Admin dashboard surface for listener status
+- [ ] Smarter batching to skip redundant cache clears during rapid-fire deployments
