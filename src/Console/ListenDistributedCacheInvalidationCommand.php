@@ -1,5 +1,16 @@
 <?php
 
+/*
+ * This file is part of fof/redis.
+ *
+ * Copyright (c) Bokt.
+ * Copyright (c) Blomstra Ltd.
+ * Copyright (c) FriendsOfFlarum
+ *
+ * For the full copyright and license information, please view the LICENSE.md
+ * file that was distributed with this source code.
+ */
+
 namespace FoF\Redis\Console;
 
 use Flarum\Console\AbstractCommand;
@@ -63,7 +74,6 @@ class ListenDistributedCacheInvalidationCommand extends AbstractCommand
                     $this->handleCacheClear();
                     $this->syncLastSeenVersion();
                 });
-
             } catch (\Throwable $e) {
                 $this->log->error('Redis listener stopped:', ['exception' => $e]);
                 sleep(5); // backoff before retrying
@@ -77,6 +87,7 @@ class ListenDistributedCacheInvalidationCommand extends AbstractCommand
     {
         if (!function_exists('pcntl_signal')) {
             $this->asyncSignalDispatching = false;
+
             return;
         }
 
@@ -102,13 +113,15 @@ class ListenDistributedCacheInvalidationCommand extends AbstractCommand
 
             if ($globalVersion === 0) {
                 $this->log->critical($this->messagePrefix().'Global cache version is not set in Redis, skipping reconciliation.');
+
                 return;
             }
 
-            $lastSeenVersion =$this->service->getLastSeenVersion();
+            $lastSeenVersion = $this->service->getLastSeenVersion();
 
             if ($lastSeenVersion === 0) {
                 $this->service->updateLastSeenVersion($globalVersion);
+
                 return;
             }
 
@@ -126,12 +139,13 @@ class ListenDistributedCacheInvalidationCommand extends AbstractCommand
 
     protected function messagePrefix()
     {
-        return 'POD:'.$this->service->getPodId() .' - ';
+        return 'POD:'.$this->service->getPodId().' - ';
     }
 
     protected function handleCacheClear(): void
     {
         $this->info('Clearing local caches...');
+
         try {
             $locales = resolve(LocaleManager::class);
 
@@ -158,7 +172,7 @@ class ListenDistributedCacheInvalidationCommand extends AbstractCommand
 
     protected function shouldProcessPayload(string $payload): bool
     {
-        $this->info('Checking if payload should be processed...'. $payload);
+        $this->info('Checking if payload should be processed...'.$payload);
         $timestamp = $this->extractTimestampFromPayload($payload);
 
         if ($timestamp === null) {

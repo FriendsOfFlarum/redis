@@ -1,5 +1,16 @@
 <?php
 
+/*
+ * This file is part of fof/redis.
+ *
+ * Copyright (c) Bokt.
+ * Copyright (c) Blomstra Ltd.
+ * Copyright (c) FriendsOfFlarum
+ *
+ * For the full copyright and license information, please view the LICENSE.md
+ * file that was distributed with this source code.
+ */
+
 namespace FoF\Redis\Service;
 
 use Illuminate\Contracts\Redis\Factory;
@@ -27,14 +38,15 @@ class DistributedCacheInvalidationService
 
     public function updateLastSeenVersion(int $timeStamp): void
     {
-        $lastSeenKey = "flarum:cache:version:last_seen:".$this->getPodId();
+        $lastSeenKey = 'flarum:cache:version:last_seen:'.$this->getPodId();
         $this->redisFactory->connection(static::DEFAULT_CONNECTION)->set($lastSeenKey, $timeStamp, 'ex', 604800); // expire in 7 days
     }
 
     public function getLastSeenVersion(): int
     {
-        $lastSeenKey = "flarum:cache:version:last_seen:".$this->getPodId();
-        return (int)$this->getConnection()->get($lastSeenKey);
+        $lastSeenKey = 'flarum:cache:version:last_seen:'.$this->getPodId();
+
+        return (int) $this->getConnection()->get($lastSeenKey);
     }
 
     public function getPodId(): string
@@ -54,6 +66,6 @@ class DistributedCacheInvalidationService
 
     public function getGlobalCacheVersion(): int
     {
-        return (int)$this->getConnection()->get('flarum:cache:version');
+        return (int) $this->getConnection()->get('flarum:cache:version');
     }
 }

@@ -68,7 +68,7 @@ class Cache extends Provider
             // Set global cache version for distributed invalidation
             // This signals other instances to invalidate their local caches
             try {
-                /** @var DistributedCacheInvalidationService  $service */
+                /** @var DistributedCacheInvalidationService $service */
                 $service = $container->make(DistributedCacheInvalidationService::class);
                 $service->notify();
             } catch (\Exception $e) {
