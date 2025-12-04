@@ -23,13 +23,29 @@ use Psr\Log\LoggerInterface;
 
 class ListenDistributedCacheInvalidationCommand extends AbstractCommand
 {
-    protected bool $stopRequested = false;
-    protected bool $asyncSignalDispatching = false;
-    protected ?Connection $activeSubscription = null;
-    protected DistributedCacheInvalidationService $service;
+    /** @var bool */
+    protected $stopRequested = false;
 
-    public function __construct(protected Paths $paths, protected LoggerInterface $log, ?string $name = null)
+    /** @var bool */
+    protected $asyncSignalDispatching = false;
+
+    /** @var Connection|null */
+    protected $activeSubscription = null;
+
+    /** @var DistributedCacheInvalidationService */
+    protected $service;
+
+    /** @var Paths */
+    protected $paths;
+
+    /** @var LoggerInterface */
+    protected $log;
+
+    public function __construct(Paths $paths, LoggerInterface $log, ?string $name = null)
     {
+        $this->paths = $paths;
+        $this->log = $log;
+
         parent::__construct($name);
     }
 
@@ -95,8 +111,8 @@ class ListenDistributedCacheInvalidationCommand extends AbstractCommand
             ? pcntl_async_signals(true)
             : false;
 
-        pcntl_signal(SIGTERM, $this->requestStop(...));
-        pcntl_signal(SIGINT, $this->requestStop(...));
+        pcntl_signal(SIGTERM, [$this, 'requestStop']);
+        pcntl_signal(SIGINT, [$this, 'requestStop']);
     }
 
     protected function dispatchPendingSignals(): void
