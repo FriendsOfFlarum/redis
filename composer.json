@@ -29,8 +29,8 @@
         }
     },
     "require": {
-        "flarum/core": "^2.0.0-beta.2",
-        "illuminate/redis": "^11.42",
+        "flarum/core": "^2.0.0",
+        "illuminate/redis": "^11.0 || ^12.0",
         "predis/predis": "^v2.3.0"
     },
     "autoload": {
@@ -48,5 +48,6 @@
     "scripts-descriptions": {
         "analyse:phpstan": "Run static analysis"
     },
-    "minimum-stability": "dev"
+    "minimum-stability": "dev",
+    "prefer-stable": true
 }
