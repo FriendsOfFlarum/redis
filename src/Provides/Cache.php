@@ -14,7 +14,6 @@
 namespace FoF\Redis\Provides;
 
 use Flarum\Foundation\Event\ClearingCache;
-use Flarum\Foundation\Paths;
 use FoF\Redis\Configuration;
 use FoF\Redis\Event\CacheConnectionReady;
 use FoF\Redis\Middleware\DistributedCacheInvalidation;
@@ -37,16 +36,16 @@ class Cache extends Provider
             /** @var RedisManager $manager */
             $manager->addConnection($this->connection, $configuration->toArray());
 
-            /** 
+            /**
              * @var Dispatcher $events
-             * 
+             *
              * This event dispatches very early to notify that the cache connection is ready.
-             * 
+             *
              * In order to listen for this event, you need to register your listener before the cache provider boots.
              * This can be done by using a ServiceProvider to register the listener.
-             * 
+             *
              * @example
-             * 
+             *
              * class CacheReadyProvider extends AbstractServiceProvider
              * {
              *    public function register()
@@ -57,7 +56,7 @@ class Cache extends Provider
              *     );
              *   }
              * }
-            */
+             */
             $events = $container->make(Dispatcher::class);
             $events->dispatch(
                 new CacheConnectionReady($this->connection, $configuration)
