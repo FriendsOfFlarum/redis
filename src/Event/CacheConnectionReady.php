@@ -17,9 +17,23 @@ use FoF\Redis\Configuration;
 
 class CacheConnectionReady
 {
-    public function __construct(
-        public ?string $connection,
-        public ?Configuration $configuration
-    ) {
+    /**
+     * The name of the Redis connection that is ready.
+     *
+     * @var string|null
+     */
+    public $connection;
+
+    /**
+     * The configuration of the Redis connection that is ready.
+     *
+     * @var Configuration|null
+     */
+    public $configuration;
+
+    public function __construct($connection, $configuration)
+    {
+        $this->connection = $connection;
+        $this->configuration = $configuration;
     }
 }
