@@ -56,11 +56,7 @@ class Cache extends Provider
             }
         };
 
-        if (class_exists(\Flarum\Foundation\Event\ApplicationBooted::class)) { // Flarum >= 1.8.13
-            $events->listen(\Flarum\Foundation\Event\ApplicationBooted::class, $bootCallback);
-        } else {
-            $container->make('flarum')->booted($bootCallback);
-        }
+        $events->listen(\Flarum\Foundation\Event\ApplicationBooted::class, $bootCallback);
 
         $container->bind('cache.redisstore', function ($container) use ($configuration) {
             /** @var RedisManager $manager */
