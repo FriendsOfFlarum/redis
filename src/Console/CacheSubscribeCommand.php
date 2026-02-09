@@ -72,6 +72,7 @@ class CacheSubscribeCommand extends AbstractCommand
             if (!$redis) {
                 $this->error('[Cache Subscriber] RedisManager not available - fof/redis may not be loaded');
                 $this->logger->error('[Cache Subscriber] RedisManager resolution failed', ['pod' => $podId]);
+
                 return 1;
             }
 
@@ -80,16 +81,17 @@ class CacheSubscribeCommand extends AbstractCommand
             if ($redis->connection('fof.cache') === null) {
                 $this->error('[Cache Subscriber] Redis connection "fof.cache" not configured');
                 $this->logger->error('[Cache Subscriber] Redis connection "fof.cache" missing', ['pod' => $podId]);
+
                 return 1;
             }
-
         } catch (\Exception $e) {
             $this->error("[Cache Subscriber] Failed to resolve RedisManager: {$e->getMessage()}");
             $this->logger->error('[Cache Subscriber] RedisManager resolution error', [
-                'pod' => $podId,
+                'pod'       => $podId,
                 'exception' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace'     => $e->getTraceAsString(),
             ]);
+
             return 1;
         }
 
@@ -100,8 +102,9 @@ class CacheSubscribeCommand extends AbstractCommand
 
             // Verify we have a Predis client (fof/redis always uses Predis)
             if (!$client instanceof \Predis\Client) {
-                $this->error('[Cache Subscriber] Expected Predis client, got: ' . get_class($client));
+                $this->error('[Cache Subscriber] Expected Predis client, got: '.get_class($client));
                 $this->logger->error('[Cache Subscriber] Unexpected Redis client type', ['client' => get_class($client)]);
+
                 return 1;
             }
 
@@ -110,10 +113,10 @@ class CacheSubscribeCommand extends AbstractCommand
             $params = $client->getConnection()->getParameters();
 
             $pubsubClient = new \Predis\Client([
-                'scheme' => $params->scheme ?? 'tcp',
-                'host' => $params->host ?? 'localhost',
-                'port' => $params->port ?? 6379,
-                'database' => $params->database ?? 0,
+                'scheme'             => $params->scheme ?? 'tcp',
+                'host'               => $params->host ?? 'localhost',
+                'port'               => $params->port ?? 6379,
+                'database'           => $params->database ?? 0,
                 'read_write_timeout' => 0, // Infinite timeout for pub/sub
             ]);
 
@@ -121,16 +124,16 @@ class CacheSubscribeCommand extends AbstractCommand
 
             // If we reach here, subscription ended (connection died)
             $this->removeLockFile();
-
         } catch (\Exception $e) {
             $this->removeLockFile();
             $this->error("[Cache Subscriber] Connection failed: {$e->getMessage()}");
             $this->logger->error('[Cache Subscriber] Redis connection failed', [
                 'exception' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'pod' => $podId
+                'trace'     => $e->getTraceAsString(),
+                'pod'       => $podId,
             ]);
             $this->error('[Cache Subscriber] Will retry on next cron trigger');
+
             return 1;
         }
 
@@ -138,7 +141,7 @@ class CacheSubscribeCommand extends AbstractCommand
     }
 
     /**
-     * Subscribe using Predis client
+     * Subscribe using Predis client.
      */
     private function subscribePredis(\Predis\Client $client, string $podId): void
     {
@@ -170,15 +173,16 @@ class CacheSubscribeCommand extends AbstractCommand
             $this->error("[Cache Subscriber] Subscription error: {$e->getMessage()}");
             $this->logger->error('[Cache Subscriber] Subscription failed', [
                 'exception' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'pod' => $podId
+                'trace'     => $e->getTraceAsString(),
+                'pod'       => $podId,
             ]);
+
             throw $e;
         }
     }
 
     /**
-     * Handle incoming cache invalidation message
+     * Handle incoming cache invalidation message.
      *
      * @return bool True if should exit (--once mode), false to continue
      */
@@ -190,6 +194,7 @@ class CacheSubscribeCommand extends AbstractCommand
             if (!$data || !isset($data['source'])) {
                 $this->error('[Cache Subscriber] Invalid message format, skipping');
                 $this->logger->warning('[Cache Subscriber] Invalid message format received');
+
                 return false;
             }
 
@@ -198,14 +203,14 @@ class CacheSubscribeCommand extends AbstractCommand
                 $this->info('[Cache Subscriber] Source is this pod - running local invalidation');
                 $this->logger->info('[Cache Subscriber] Source is this pod - running local invalidation', [
                     'source' => $data['source'],
-                    'pod' => $podId
+                    'pod'    => $podId,
                 ]);
             }
 
             $this->info("[Cache Subscriber] ⚠ Cache invalidation from: {$data['source']}");
             $this->logger->info('[Cache Subscriber] Received cache invalidation', [
                 'source' => $data['source'],
-                'pod' => $podId
+                'pod'    => $podId,
             ]);
 
             // Invalidate local caches
@@ -216,13 +221,13 @@ class CacheSubscribeCommand extends AbstractCommand
 
             // Exit if --once flag is set (for testing)
             return (bool) $this->input->getOption('once');
-
         } catch (\Exception $e) {
             $this->error("[Cache Subscriber] Error handling message: {$e->getMessage()}");
             $this->logger->error('[Cache Subscriber] Error handling message', [
                 'exception' => $e->getMessage(),
-                'pod' => $podId
+                'pod'       => $podId,
             ]);
+
             return false;
         }
     }
@@ -255,18 +260,17 @@ class CacheSubscribeCommand extends AbstractCommand
             if (function_exists('opcache_reset')) {
                 opcache_reset();
             }
-
         } catch (\Exception $e) {
             // Fail gracefully - log but don't break the subscriber
             $this->error("[Cache Subscriber] Failed to invalidate caches: {$e->getMessage()}");
             $this->logger->error('[Cache Subscriber] Failed to invalidate local caches', [
-                'exception' => $e->getMessage()
+                'exception' => $e->getMessage(),
             ]);
         }
     }
 
     /**
-     * Check if cache:subscribe is already running in this pod
+     * Check if cache:subscribe is already running in this pod.
      */
     private function isAlreadyRunning(): bool
     {
@@ -285,11 +289,12 @@ class CacheSubscribeCommand extends AbstractCommand
 
         // Stale lock file, clean it up
         $this->removeLockFile();
+
         return false;
     }
 
     /**
-     * Create lock file with current PID
+     * Create lock file with current PID.
      */
     private function createLockFile(): void
     {
@@ -298,7 +303,7 @@ class CacheSubscribeCommand extends AbstractCommand
     }
 
     /**
-     * Remove lock file
+     * Remove lock file.
      */
     private function removeLockFile(): void
     {
@@ -309,15 +314,15 @@ class CacheSubscribeCommand extends AbstractCommand
     }
 
     /**
-     * Get the lock file path (in base directory, not shared storage)
+     * Get the lock file path (in base directory, not shared storage).
      */
     private function getLockFilePath(): string
     {
-        return $this->paths->base . '/cache-subscriber.lock';
+        return $this->paths->base.'/cache-subscriber.lock';
     }
 
     /**
-     * Check if a process is running
+     * Check if a process is running.
      */
     private function isProcessRunning(int $pid): bool
     {

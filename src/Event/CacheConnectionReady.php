@@ -34,7 +34,6 @@ class CacheConnectionReady
     /**
      * Dispatched after the application boot sequence completes.
      */
-
     public function __construct($connection, $configuration)
     {
         $this->connection = $connection;

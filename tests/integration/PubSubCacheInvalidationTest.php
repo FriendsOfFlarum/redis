@@ -13,11 +13,9 @@
 
 namespace FoF\Redis\Tests\integration;
 
-use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Testing\integration\TestCase;
 use FoF\Redis\Console\CacheSubscribeCommand;
 use FoF\Redis\Extend\Redis as RedisExtender;
-use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory;
 
 class PubSubCacheInvalidationTest extends TestCase
@@ -32,8 +30,8 @@ class PubSubCacheInvalidationTest extends TestCase
                 'password' => getenv('REDIS_PASSWORD') ?: null,
                 'port'     => getenv('REDIS_PORT') ?: 6379,
                 'database' => 15,
-                'pubsub' => [
-                    'enabled' => true,
+                'pubsub'   => [
+                    'enabled'   => true,
                     'autostart' => false,
                 ],
             ])

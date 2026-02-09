@@ -90,8 +90,8 @@ class Cache extends Provider
                 if ($pubSubConfig['enabled']) {
                     $message = json_encode([
                         'timestamp' => time(),
-                        'source' => gethostname(),
-                        'version' => time(),
+                        'source'    => gethostname(),
+                        'version'   => time(),
                     ]);
 
                     $redis->connection($this->connection)->publish($pubSubConfig['channel'], $message);
@@ -112,10 +112,10 @@ class Cache extends Provider
         }
 
         return [
-            'enabled' => $enabled,
-            'autostart' => $autostart,
-            'channel' => $config['channel'] ?? 'flarum:cache:invalidate',
-            'delay' => (int) ($config['delay'] ?? 0),
+            'enabled'        => $enabled,
+            'autostart'      => $autostart,
+            'channel'        => $config['channel'] ?? 'flarum:cache:invalidate',
+            'delay'          => (int) ($config['delay'] ?? 0),
             'spawn_lock_ttl' => (int) ($config['spawn_lock_ttl'] ?? 300),
         ];
     }
@@ -125,8 +125,8 @@ class Cache extends Provider
         $paths = $container->make(Paths::class);
         $logger = $container->make(LoggerInterface::class);
 
-        $lockFile = $paths->base . '/cache-subscriber.lock';
-        $spawnLockFile = $paths->base . '/cache-subscriber.spawn.lock';
+        $lockFile = $paths->base.'/cache-subscriber.lock';
+        $spawnLockFile = $paths->base.'/cache-subscriber.spawn.lock';
 
         if ($this->isAlreadyRunning($lockFile, $pubSubConfig['spawn_lock_ttl'])) {
             return;
@@ -141,7 +141,7 @@ class Cache extends Provider
         $this->writeSubscriberLock($lockFile);
 
         $logger->info('[Cache Subscriber] Attempting to auto-start cache subscriber', [
-            'pod' => gethostname()
+            'pod' => gethostname(),
         ]);
 
         try {
@@ -150,13 +150,13 @@ class Cache extends Provider
 
             $options = [];
             if ($pubSubConfig['delay'] > 0) {
-                $options[] = '--delay=' . (int) $pubSubConfig['delay'];
+                $options[] = '--delay='.(int) $pubSubConfig['delay'];
             }
             if (!empty($pubSubConfig['channel'])) {
-                $options[] = '--channel=' . escapeshellarg($pubSubConfig['channel']);
+                $options[] = '--channel='.escapeshellarg($pubSubConfig['channel']);
             }
 
-            $optionString = $options ? ' ' . implode(' ', $options) : '';
+            $optionString = $options ? ' '.implode(' ', $options) : '';
 
             $command = sprintf(
                 'cd %s && %s flarum cache:subscribe%s > /dev/null 2>&1 & echo $!',
@@ -170,19 +170,19 @@ class Cache extends Provider
             if ($pid && is_numeric($pid)) {
                 $logger->info('[Cache Subscriber] Successfully spawned cache subscriber', [
                     'pid' => $pid,
-                    'pod' => gethostname()
+                    'pod' => gethostname(),
                 ]);
             } else {
                 $logger->error('[Cache Subscriber] Failed to spawn: Invalid PID', [
                     'pid_output' => $pid,
-                    'pod' => gethostname()
+                    'pod'        => gethostname(),
                 ]);
             }
         } catch (\Exception $e) {
             $logger->error('[Cache Subscriber] Exception while spawning subscriber', [
                 'exception' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'pod' => gethostname()
+                'trace'     => $e->getTraceAsString(),
+                'pod'       => gethostname(),
             ]);
             $this->removeSubscriberLock($lockFile);
         } finally {
@@ -204,6 +204,7 @@ class Cache extends Provider
             }
 
             @unlink($lockFile);
+
             return false;
         }
 
@@ -211,6 +212,7 @@ class Cache extends Provider
             $age = time() - (int) @filemtime($lockFile);
             if ($age > $staleAfterSeconds) {
                 @unlink($lockFile);
+
                 return false;
             }
         }
@@ -242,6 +244,7 @@ class Cache extends Provider
         }
 
         fclose($handle);
+
         return true;
     }
 
