@@ -30,7 +30,7 @@ return [
 
 This enables sessions, cache and queue to run on redis.
 
-> **Multi-instance deployments:** This extension automatically handles distributed cache invalidation across multiple Flarum instances (pods/containers). See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
+> **Multi-instance deployments:** This extension can handle distributed cache invalidation across multiple Flarum instances (pods/containers) via Redis Pub/Sub. See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
 
 > **Important:** See "Use different database for each service" below to split up the database for cache vs sessions, queue
 > because a cache clear action will clear sessions and queue jobs as well if they share the same database.
@@ -115,6 +115,26 @@ return [
 ];
 ```
 
+5. Enable cache invalidation pub/sub (auto-start subscriber after app boot):
+
+```php
+return [
+    (new FoF\Redis\Extend\Redis([
+        'host' => '127.0.0.1',
+        'password' => null,
+        'port' => 6379,
+        'database' => 1,
+        'pubsub' => [
+            'enabled' => true,
+            'autostart' => true,
+            'channel' => 'flarum:cache:invalidate',
+            'delay' => 0,
+            'spawn_lock_ttl' => 300,
+        ],
+    ]))
+];
+```
+
 #### Queue
 
 Make sure to start your queue workers, see 
@@ -166,22 +186,28 @@ Some code still relies on physical files being present. This includes:
 - **Locale cache** (`storage/locale/*`) - Compiled Symfony translation catalogues
 - **View cache** (`storage/views/*`) - Compiled Blade templates
 
-These file caches are automatically synchronized across multiple instances. See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
+These file caches can be synchronized across multiple instances using Redis Pub/Sub. See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
 
 #### Running multiple Flarum instances (horizontal scaling)?
 
-When running Flarum across multiple pods/containers (Kubernetes, ECS, etc.), cache invalidation is automatically handled by this extension.
+When running Flarum across multiple pods/containers (Kubernetes, ECS, etc.), cache invalidation can be handled by this extension via Pub/Sub.
 
 **How it works:**
-- When cache is cleared on one instance, all other instances are automatically notified
-- File caches are synchronized within ~5 seconds
-- No additional setup or daemon processes required
+- When cache is cleared on one instance, all other instances are notified via Pub/Sub
+- File caches are synchronized immediately
+- Requires the cache subscriber process (auto-start available)
 
 **See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md)** for complete documentation on:
 - Architecture and implementation details
 - Performance characteristics
 - Troubleshooting tips
 - Configuration options
+
+### Events
+
+#### CacheConnectionReady
+
+Dispatched after the application boot sequence completes (core `ApplicationBooted` event).
 
 ### Links
 

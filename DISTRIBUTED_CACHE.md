@@ -17,19 +17,16 @@ This causes missing translations, stale assets, and other cache-related issues.
 
 ### The Solution
 
-**Automatic propagation using Redis as a signal bus:**
+**Automatic propagation using Redis Pub/Sub:**
 
 1. When cache is cleared on Pod A:
    - Clears local Redis + file caches
-   - Sets `flarum:cache:version` = `1730793600` in Redis
+   - Publishes a cache invalidation message to Redis channel
 
-2. On next request to Pod B (within 5 seconds):
-   - Middleware checks `flarum:cache:version` from Redis
-   - Compares with local version (stored in APCu)
-   - If different: invalidates local file caches
-   - Updates local version
+2. Pod B subscriber receives the message:
+   - Invalidates local file caches immediately
 
-3. All pods eventually consistent within 5 seconds
+3. All pods stay synchronized in real time
 
 ### What Gets Invalidated
 
@@ -42,57 +39,41 @@ This causes missing translations, stale assets, and other cache-related issues.
 
 ### Components
 
-1. **Version Signal** (Redis)
-   - Key: `flarum:cache:version`
-   - Value: Unix timestamp of last cache clear
-   - Shared across all instances
+1. **Publisher** (Redis)
+   - Channel: `flarum:cache:invalidate`
+   - Message: JSON with `timestamp`, `source`, `version`
 
-2. **Local Version Tracker** (APCu)
-   - Key: `flarum:local:cache:version`
-   - Value: Last seen global version
-   - Per PHP-FPM worker
-
-3. **Middleware** (`DistributedCacheInvalidation`)
-   - Checks version every 5 seconds (configurable)
-   - Invalidates local caches if version changed
-   - Registered on forum, admin, and API pipelines
+2. **Subscriber** (`cache:subscribe` command)
+   - Subscribes to the channel
+   - Clears local caches immediately
 
 ### Performance
 
-**With default 5-second throttle:**
-- 1 Redis GET per PHP-FPM worker per 5 seconds
-- ~0.5-1ms per check
-- APCu caches the result in-memory
-- Negligible overhead: ~0.002ms per request average
-
-**Scalability example:**
-- 1000 requests/second = ~200 PHP-FPM workers
-- 200 workers / 5 seconds = 40 Redis GETs/second
-- Total overhead: ~20-40ms/second across entire fleet
+Pub/Sub has near-zero per-request overhead and only incurs work on cache clears.
 
 ## Configuration
 
-### Optional Settings
+### Pub/Sub Configuration
 
-Add to your `config.php`:
+Enable Pub/Sub auto-start and configure the channel via the Redis extender config:
 
 ```php
 return [
-    // ... other config
-
-    'cache' => [
-        // How often to check for cache invalidation (seconds)
-        // Default: 5
-        'distributed_invalidation_interval' => 5,
-    ],
+    (new FoF\Redis\Extend\Redis([
+        'host' => '127.0.0.1',
+        'password' => null,
+        'port' => 6379,
+        'database' => 1,
+        'pubsub' => [
+            'enabled' => true,
+            'autostart' => true,
+            'channel' => 'flarum:cache:invalidate',
+            'delay' => 0,
+            'spawn_lock_ttl' => 300,
+        ],
+    ]))
 ];
 ```
-
-### Tuning the Interval
-
-- **Lower (1-2s)**: Faster propagation, more Redis load
-- **Higher (10-30s)**: Less Redis load, slower propagation
-- **Recommendation**: 5s is optimal for most deployments
 
 ## Requirements
 
@@ -102,25 +83,15 @@ return [
 - Multiple Flarum instances
 
 ### No Additional Requirements
-- Uses PHP static variables for per-worker caching
 - No special PHP extensions needed
-
-## Backward Compatibility
-
-✅ **Single instance**: Works with tiny overhead
-✅ **No special extensions**: Uses PHP static variables
-✅ **Redis unavailable**: Fails gracefully
-✅ **Existing installs**: No migration needed
 
 ## Deployment
 
-### No Additional Setup Required!
-
-The feature is **automatic** when you install fof/redis:
+### Enable Pub/Sub
 
 1. Install/upgrade fof/redis
-2. Clear cache: `php flarum cache:clear`
-3. ✅ Done! All instances will stay synchronized
+2. Enable `pubsub` config (see above)
+3. Clear cache: `php flarum cache:clear`
 
 ### Testing
 
@@ -130,13 +101,8 @@ The feature is **automatic** when you install fof/redis:
 # On Pod A - clear cache
 php flarum cache:clear
 
-# Check Redis has version key
-redis-cli -n 1
-> GET flarum:cache:version
-"1730793600"
-
-# On Pod B - make a request (triggers middleware)
-curl https://your-forum.com
+# On Pod B - check logs for subscriber message
+docker logs <container> | grep "Cache Subscriber"
 
 # Check Pod B's locale cache was cleared
 ls -la storage/locale/
@@ -154,66 +120,23 @@ php flarum tinker
 ```
 
 
-**Check middleware is registered:**
-```bash
-# Should see DistributedCacheInvalidation in middleware stack
-php flarum list
-```
-
-### High Redis load?
-
-Increase the check interval:
-```php
-// config.php
-'cache' => [
-    'distributed_invalidation_interval' => 10, // Check every 10s instead of 5s
-],
-```
-
 ### Manual invalidation for testing
 
 ```php
-// Force all instances to invalidate on next request
+// Force all instances to invalidate immediately
 php flarum tinker
->>> resolve(\Illuminate\Contracts\Redis\Factory::class)->connection('fof.cache')->set('flarum:cache:version', time());
+>>> resolve(\Illuminate\Contracts\Redis\Factory::class)->connection('fof.cache')->publish('flarum:cache:invalidate', json_encode(['timestamp' => time(), 'source' => 'manual', 'version' => time()]));
 ```
 
 ## Technical Details
 
-### Why Not Pub/Sub?
+### Pub/Sub
 
-**Redis Pub/Sub** was considered but rejected because:
-- ❌ Requires long-running subscriber daemon process
-- ❌ Additional process management (supervisor, systemd)
-- ❌ Restart on deploy/crash recovery
-- ❌ Operational complexity
-
-**Polling approach** is simpler:
-- ✅ No daemons needed
-- ✅ Works automatically
-- ✅ Negligible overhead with throttling
-- ✅ Self-healing (checks on every request)
+Pub/Sub provides near real-time cache invalidation across all containers. It requires a long-running subscriber process, which can be auto-started via configuration.
 
 ### Why Static Variables?
 
-**Static variables** in PHP persist across requests within the same PHP-FPM worker process
-
-- Stores "last known version" in each PHP-FPM worker's memory
-- Combined with throttling (5-second check interval), avoids checking Redis on every request
-- No external dependencies or extensions needed
-
-**Flow with throttling + static variables:**
-```
-Request 1 @ T+0s → Check Redis (1ms) → Store in static var → Continue
-Request 2 @ T+1s → Check throttle → Skip (last check was 1s ago) → Continue
-Request 3 @ T+2s → Check throttle → Skip (last check was 2s ago) → Continue
-Request 4 @ T+5s → Check throttle → Check Redis (1ms) → Update static var → Continue
-```
-
-**Benefits:**
-- Only 1 Redis check per worker per 5 seconds
-- Static variable lookups are instant (in-memory, same process)
-- Works everywhere - no extensions needed
+Pub/Sub avoids per-request checks entirely and only does work when a cache clear happens.
 
 ### Race Conditions?
 
@@ -222,9 +145,9 @@ Request 4 @ T+5s → Check throttle → Check Redis (1ms) → Update static var 
 **Safe because:**
 1. Event fires AFTER core finishes clearing
 2. Version signal written to Redis after local clear
-3. Other pods check version periodically
+3. Other pods receive the message and clear immediately
 4. Each pod clears independently (no locks needed)
-5. Worst case: Request sees stale cache for up to 5 seconds
+5. Worst case: Brief delay for message delivery
 
 **Not a problem because:**
 - Cache clears are infrequent (admin operations)
@@ -237,7 +160,7 @@ Possible enhancements (not currently needed):
 
 - [ ] Metrics/monitoring for cache propagation
 - [ ] Admin UI indicator showing last sync time
-- [ ] Optional immediate invalidation via Realtime WebSocket
+- [ ] Subscriber heartbeat metrics
 - [ ] Selective invalidation (only specific cache types)
 
 ## Credits
