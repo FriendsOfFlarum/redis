@@ -23,11 +23,18 @@ use Symfony\Component\Console\Input\InputOption;
 
 class CacheSubscribeCommand extends AbstractCommand
 {
+    protected Paths $paths;
+    protected LocaleManager $locales;
+    protected LoggerInterface $logger;
+
     public function __construct(
-        protected Paths $paths,
-        protected LocaleManager $locales,
-        protected LoggerInterface $logger
+        Paths $paths,
+        LocaleManager $locales,
+        LoggerInterface $logger
     ) {
+        $this->paths = $paths;
+        $this->locales = $locales;
+        $this->logger = $logger;
         parent::__construct();
     }
 
