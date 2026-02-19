@@ -16,6 +16,7 @@ namespace FoF\Redis\Extend;
 use Flarum\Extend\ExtenderInterface;
 use Flarum\Extension\Extension;
 use FoF\Redis\Overrides\RedisManager;
+use FoF\Redis\RedisServerInfo;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Redis\Factory;
 
@@ -30,5 +31,7 @@ class Bindings implements ExtenderInterface
 
             $container->alias(RedisManager::class, Factory::class);
         }
+
+        $container->singleton(RedisServerInfo::class);
     }
 }
