@@ -13,9 +13,12 @@
 
 namespace FoF\Redis\Extend;
 
+use Flarum\Extend\Console;
 use Flarum\Extend\ExtenderInterface;
 use Flarum\Extension\Extension;
 use FoF\Redis\Configuration;
+use FoF\Redis\Console\CacheSubscribeCommand;
+use FoF\Redis\Console\RedisInfoCommand;
 use Illuminate\Contracts\Container\Container;
 
 /**
@@ -36,7 +39,19 @@ class Redis implements ExtenderInterface
 
         // Add bindings only if any of the redis services are requested.
         if (count($services)) {
+            $container->instance(Configuration::class, $this->configuration);
+
             (new Bindings())->extend($container, $extension);
+
+            (new Console())
+                ->command(RedisInfoCommand::class)
+                ->extend($container, $extension);
+        }
+
+        if (array_key_exists('cache', $services)) {
+            (new Console())
+                ->command(CacheSubscribeCommand::class)
+                ->extend($container, $extension);
         }
 
         foreach ($services as $service => $class) {
