@@ -16,6 +16,7 @@ namespace FoF\Redis;
 use FoF\Redis\Provides\Cache;
 use FoF\Redis\Provides\Queue;
 use FoF\Redis\Provides\Session;
+use FoF\Redis\Provides\Settings;
 use Illuminate\Support\Arr;
 use InvalidArgumentException;
 
@@ -24,9 +25,10 @@ class Configuration
     protected array $config = [];
     protected array $databases = [];
     protected array $enabled = [
-        'cache'   => Cache::class,
-        'queue'   => Queue::class,
-        'session' => Session::class,
+        'cache'    => Cache::class,
+        'queue'    => Queue::class,
+        'session'  => Session::class,
+        'settings' => Settings::class,
     ];
 
     public function __construct(array $config = [])
