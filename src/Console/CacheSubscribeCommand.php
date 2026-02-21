@@ -119,13 +119,9 @@ class CacheSubscribeCommand extends AbstractCommand
             // We need read_write_timeout = 0 for pub/sub to avoid timeouts while waiting for messages
             $params = $client->getConnection()->getParameters();
 
-            $pubsubClient = new \Predis\Client([
-                'scheme'             => $params->scheme ?? 'tcp',
-                'host'               => $params->host ?? 'localhost',
-                'port'               => $params->port ?? 6379,
-                'database'           => $params->database ?? 0,
-                'read_write_timeout' => 0, // Infinite timeout for pub/sub
-            ]);
+            $pubsubClient = new \Predis\Client(
+                array_merge($params->toArray(), ['read_write_timeout' => 0])
+            );
 
             $this->subscribePredis($pubsubClient, $podId);
 
@@ -333,14 +329,18 @@ class CacheSubscribeCommand extends AbstractCommand
      */
     private function isProcessRunning(int $pid): bool
     {
-        // Use posix_kill with signal 0 to check if process exists
-        // Signal 0 doesn't actually send a signal, just checks if we can
+        // /proc/$pid is readable regardless of process owner (Linux).
+        // posix_kill($pid, 0) returns false for cross-user processes when
+        // the caller lacks permission, causing false negatives.
+        if (file_exists("/proc/$pid")) {
+            return true;
+        }
+
+        // Fallback for non-Linux (macOS, BSD) where /proc is absent.
         if (function_exists('posix_kill')) {
             return posix_kill($pid, 0);
         }
 
-        // Fallback for systems without posix extension
-        // This works on Linux/Unix systems
-        return file_exists("/proc/$pid");
+        return false;
     }
 }

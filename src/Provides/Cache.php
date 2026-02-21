@@ -218,11 +218,19 @@ class Cache extends Provider
 
     private function isProcessRunning(int $pid): bool
     {
+        // /proc/$pid is readable regardless of process owner (Linux).
+        // posix_kill($pid, 0) returns false for cross-user processes when
+        // the caller lacks permission, causing false negatives.
+        if (file_exists("/proc/$pid")) {
+            return true;
+        }
+
+        // Fallback for non-Linux (macOS, BSD) where /proc is absent.
         if (function_exists('posix_kill')) {
             return posix_kill($pid, 0);
         }
 
-        return file_exists("/proc/$pid");
+        return false;
     }
 
     private function acquireSpawnLock(string $lockFile, int $staleAfterSeconds): bool
