@@ -48,17 +48,30 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
     {
         $this->inner->set($key, $value);
 
-        // Invalidate entire cache to prevent race conditions in multi-container environments
-        // The cache will be rebuilt from database on next read
-        $this->cache->forget($this->cacheKey);
+        // Update the cache in-place to avoid a stale read-replica re-populating it.
+        // Environments with a read/write DB split (no `sticky` connection) would
+        // otherwise re-read the old value from the replica after forget().
+        // If the cache is cold, drop it entirely so the next all() re-builds from DB.
+        $all = $this->cache->get($this->cacheKey);
+
+        if (is_array($all)) {
+            $all[$key] = $value;
+            $this->cache->put($this->cacheKey, $all, $this->ttl);
+        }
     }
 
     public function delete(string $key): void
     {
         $this->inner->delete($key);
 
-        // Invalidate entire cache to prevent race conditions in multi-container environments
-        // The cache will be rebuilt from database on next read
-        $this->cache->forget($this->cacheKey);
+        // Remove the key from the cached array rather than dropping the whole entry,
+        // for the same reason as set(): avoids a stale replica re-read.
+        // If the cache is cold, there is nothing to patch.
+        $all = $this->cache->get($this->cacheKey);
+
+        if (is_array($all)) {
+            unset($all[$key]);
+            $this->cache->put($this->cacheKey, $all, $this->ttl);
+        }
     }
 }
