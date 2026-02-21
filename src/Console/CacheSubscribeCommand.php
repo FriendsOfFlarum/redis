@@ -122,13 +122,11 @@ class CacheSubscribeCommand extends AbstractCommand
             $nodeConnection = $client->getConnection();
             $params = $nodeConnection->getParameters();
 
-            $pubsubClient = new \Predis\Client([
-                'scheme'             => $params->scheme ?? 'tcp',
-                'host'               => $params->host ?? 'localhost',
-                'port'               => $params->port ?? 6379,
-                'database'           => $params->database ?? 0,
-                'read_write_timeout' => 0, // Infinite timeout for pub/sub
-            ]);
+            // Use all original connection parameters (handles tcp, unix sockets, tls, etc.)
+            // and override read_write_timeout to 0 for the infinite blocking needed by pub/sub.
+            $pubsubClient = new \Predis\Client(
+                array_merge($params->toArray(), ['read_write_timeout' => 0])
+            );
 
             $this->subscribePredis($pubsubClient, $podId);
 
