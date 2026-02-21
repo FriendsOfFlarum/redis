@@ -13,6 +13,8 @@
 
 namespace FoF\Redis\Provides;
 
+use Flarum\Extension\Event\Disabled;
+use Flarum\Extension\Event\Enabled;
 use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Settings\DatabaseSettingsRepository;
 use Flarum\Settings\DefaultSettingsRepository;
@@ -72,17 +74,25 @@ class Settings extends Provider
             );
         });
 
-        // Listen for cache clear events and clear settings cache too
-        $container->make(Dispatcher::class)->listen(
-            ClearingCache::class,
-            function () use ($container) {
-                try {
-                    $settingsCache = $container->make('cache.settings');
-                    $settingsCache->forget('flarum:settings');
-                } catch (\Exception $e) {
-                    // Fail gracefully if settings cache is unavailable
-                }
+        $invalidateSettingsCache = function () use ($container) {
+            try {
+                $settingsCache = $container->make('cache.settings');
+                $settingsCache->forget('flarum:settings');
+            } catch (\Exception $e) {
+                // Fail gracefully if settings cache is unavailable
             }
-        );
+        };
+
+        $dispatcher = $container->make(Dispatcher::class);
+
+        // Clear cached settings when the cache is explicitly cleared.
+        $dispatcher->listen(ClearingCache::class, $invalidateSettingsCache);
+
+        // Extension enable/disable writes extensions_enabled via MemoryCacheSettingsRepository
+        // (ExtensionManager is resolved before our binding override takes effect), so it bypasses
+        // RedisCacheSettingsRepository::set(). Invalidate the Redis key so the next read
+        // re-populates from DB, which always has the correct value.
+        $dispatcher->listen(Enabled::class, $invalidateSettingsCache);
+        $dispatcher->listen(Disabled::class, $invalidateSettingsCache);
     }
 }
