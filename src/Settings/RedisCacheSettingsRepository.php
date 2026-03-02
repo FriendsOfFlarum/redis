@@ -23,6 +23,7 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
     protected CacheRepository $cache;
     protected string $cacheKey = 'flarum:settings';
     protected int $ttl = 3600; // 1 hour
+    protected bool $loading = false;
 
     public function __construct(SettingsRepositoryInterface $inner, CacheRepository $cache)
     {
@@ -32,9 +33,23 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
 
     public function all(): array
     {
-        return $this->cache->remember($this->cacheKey, $this->ttl, function () {
-            return $this->inner->all();
-        });
+        // Guard against re-entrant calls triggered by DB events fired during
+        // the cache-fill query (e.g. a subscriber that reads settings on
+        // StatementPrepared). Without this, the cache miss causes a DB query
+        // which fires an event which calls all() again → infinite recursion.
+        if ($this->loading) {
+            return [];
+        }
+
+        $this->loading = true;
+
+        try {
+            return $this->cache->remember($this->cacheKey, $this->ttl, function () {
+                return $this->inner->all();
+            });
+        } finally {
+            $this->loading = false;
+        }
     }
 
     public function get(string $key, mixed $default = null): mixed
