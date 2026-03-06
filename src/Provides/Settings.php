@@ -18,6 +18,7 @@ use Flarum\Extension\Event\Enabled;
 use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Settings\DatabaseSettingsRepository;
 use Flarum\Settings\DefaultSettingsRepository;
+use Flarum\Settings\MemoryCacheSettingsRepository;
 use Flarum\Settings\SettingsRepositoryInterface;
 use FoF\Redis\Configuration;
 use FoF\Redis\Overrides\RedisManager;
@@ -60,16 +61,21 @@ class Settings extends Provider
             return new Repository($store);
         });
 
-        // Replace the entire settings repository binding to use Redis caching instead of MemoryCache
+        // Replace the entire settings repository binding with a three-layer chain:
+        // MemoryCacheSettingsRepository  — per-request in-process cache (zero network cost after first read)
+        //   └── RedisCacheSettingsRepository  — cross-request Redis cache (one Redis GET per request, 1h TTL)
+        //         └── DatabaseSettingsRepository  — source of truth (MySQL, hit only on Redis miss)
         $container->singleton(SettingsRepositoryInterface::class, function (Container $container) {
             $cache = $container->make('cache.settings');
 
             return new DefaultSettingsRepository(
-                new RedisCacheSettingsRepository(
-                    new DatabaseSettingsRepository(
-                        $container->make(ConnectionInterface::class)
-                    ),
-                    $cache
+                new MemoryCacheSettingsRepository(
+                    new RedisCacheSettingsRepository(
+                        new DatabaseSettingsRepository(
+                            $container->make(ConnectionInterface::class)
+                        ),
+                        $cache
+                    )
                 ),
                 $container->make('flarum.settings.default')
             );
