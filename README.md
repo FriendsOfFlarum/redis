@@ -30,6 +30,53 @@ return [
 
 This enables sessions, cache, settings, and queue to run on redis.
 
+#### phpredis vs Predis
+
+If the PHP `redis` extension (`ext-redis`) is installed, it will be used automatically. Otherwise Predis is used as a fallback. No configuration change is required.
+
+**Persistent connections (recommended for phpredis)**
+
+With phpredis, connections can be reused across requests within the same PHP-FPM worker process. Add `persistent` and `persistent_id` to your config to enable this:
+
+```php
+return [
+    new FoF\Redis\Extend\Redis([
+        'host'          => '127.0.0.1',
+        'password'      => null,
+        'port'          => 6379,
+        'database'      => 1,
+        'persistent'    => true,
+        'persistent_id' => 'flarum',  // groups connections into a named pool per worker
+    ])
+];
+```
+
+This avoids opening a new TCP connection on every request, which is a significant throughput improvement at scale. `persistent_id` is a string used to key the connection slot — use the same value across all workers on the same host.
+
+**Unix socket**
+
+```php
+return [
+    new FoF\Redis\Extend\Redis([
+        'host'          => '/var/run/redis/redis.sock',
+        'port'          => 0,
+        'database'      => 1,
+        'persistent'    => true,
+        'persistent_id' => 'flarum',
+    ])
+];
+```
+
+**Other phpredis options**
+
+| Key | Example | Notes |
+|---|---|---|
+| `timeout` | `2.0` | Connect timeout in seconds |
+| `read_timeout` | `2.0` | Per-command timeout |
+| `retry_interval` | `100` | ms between reconnect attempts |
+| `prefix` | `'flarum_'` | Key prefix |
+| `compression` | `Redis::COMPRESSION_LZ4` | phpredis ≥ 5.3, requires lz4/zstd compiled into ext-redis |
+
 > **Multi-instance deployments:** This extension can handle distributed cache invalidation across multiple Flarum instances (pods/containers) via Redis Pub/Sub. See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
 
 #### Settings Cache
