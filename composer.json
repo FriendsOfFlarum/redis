@@ -40,7 +40,8 @@
     },
     "require-dev": {
         "flarum/phpstan": "*",
-        "flarum/testing": "*"
+        "flarum/testing": "*",
+        "jetbrains/phpstorm-stubs": "^2025.3"
     },
     "scripts": {
         "analyse:phpstan": "phpstan analyse",

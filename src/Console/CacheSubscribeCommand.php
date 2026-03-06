@@ -203,9 +203,6 @@ class CacheSubscribeCommand extends AbstractCommand
         $this->logger->info('[Cache Subscriber] Running', ['pod' => $podId]);
 
         try {
-            // phpredis 6.x subscribe() accepts a Closure as second argument at runtime,
-            // but older PHPStan stubs incorrectly type it as array|string.
-            // @phpstan-ignore-next-line
             $client->subscribe([$channel], function (\Redis $redis, string $chan, string $payload) use ($podId) {
                 $shouldExit = $this->handleMessage($payload, $podId);
 
