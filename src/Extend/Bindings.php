@@ -25,7 +25,9 @@ class Bindings implements ExtenderInterface
     {
         if (!$container->has(RedisManager::class)) {
             $container->singleton(RedisManager::class, function ($app) {
-                return new RedisManager($app, 'predis', []);
+                $driver = extension_loaded('redis') ? 'phpredis' : 'predis';
+
+                return new RedisManager($app, $driver, []);
             });
 
             $container->alias(RedisManager::class, Factory::class);
