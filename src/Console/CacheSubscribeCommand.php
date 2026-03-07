@@ -108,27 +108,26 @@ class CacheSubscribeCommand extends AbstractCommand
             $connection = $redis->connection('fof.cache');
             $client = $connection->client();
 
-            // Verify we have a Predis client (fof/redis always uses Predis)
-            if (!$client instanceof \Predis\Client) {
-                $this->error('[Cache Subscriber] Expected Predis client, got: '.get_class($client));
-                $this->logger->error('[Cache Subscriber] Unexpected Redis client type', ['client' => get_class($client)]);
+            if ($client instanceof \Redis) {
+                // phpredis: set infinite read timeout so pub/sub never times out waiting for messages
+                $client->setOption(\Redis::OPT_READ_TIMEOUT, -1);
+                $this->subscribePhpRedis($client, $podId);
+            } elseif ($client instanceof \Predis\Client) {
+                // Predis: create a new client with read_write_timeout=0 for the same reason
+                // Use all original connection parameters (handles tcp, unix sockets, tls, etc.)
+                /** @var NodeConnectionInterface $nodeConnection */
+                $nodeConnection = $client->getConnection();
+                $params = $nodeConnection->getParameters();
+                $pubsubClient = new \Predis\Client(
+                    array_merge($params->toArray(), ['read_write_timeout' => 0])
+                );
+                $this->subscribePredis($pubsubClient, $podId);
+            } else {
+                $this->error('[Cache Subscriber] Unsupported Redis client: '.get_class($client));
+                $this->logger->error('[Cache Subscriber] Unsupported Redis client type', ['client' => get_class($client)]);
 
                 return 1;
             }
-
-            // Get connection parameters and create new client with infinite timeout
-            // We need read_write_timeout = 0 for pub/sub to avoid timeouts while waiting for messages
-            /** @var NodeConnectionInterface $nodeConnection */
-            $nodeConnection = $client->getConnection();
-            $params = $nodeConnection->getParameters();
-
-            // Use all original connection parameters (handles tcp, unix sockets, tls, etc.)
-            // and override read_write_timeout to 0 for the infinite blocking needed by pub/sub.
-            $pubsubClient = new \Predis\Client(
-                array_merge($params->toArray(), ['read_write_timeout' => 0])
-            );
-
-            $this->subscribePredis($pubsubClient, $podId);
 
             // If we reach here, subscription ended (connection died)
             $this->removeLockFile();
@@ -187,6 +186,40 @@ class CacheSubscribeCommand extends AbstractCommand
             ]);
 
             throw $e;
+        }
+    }
+
+    /**
+     * Subscribe using phpredis client.
+     *
+     * phpredis subscribe() is blocking and invokes the callback for each message.
+     * To support --once, we close the connection from within the callback.
+     */
+    private function subscribePhpRedis(\Redis $client, string $podId): void
+    {
+        $channel = (string) $this->input->getOption('channel');
+
+        $this->info('[Cache Subscriber] ✓ Connected (phpredis)');
+        $this->logger->info('[Cache Subscriber] Connected', ['client' => 'phpredis', 'pod' => $podId]);
+
+        $this->info("[Cache Subscriber] ✓ Subscribed to channel: {$channel}");
+        $this->logger->info('[Cache Subscriber] Subscribed successfully', ['pod' => $podId, 'channel' => $channel]);
+        $this->info("[Cache Subscriber] Running on pod: {$podId}");
+        $this->logger->info('[Cache Subscriber] Running', ['pod' => $podId]);
+
+        try {
+            $client->subscribe([$channel], function (\Redis $redis, string $chan, string $payload) use ($podId) {
+                $shouldExit = $this->handleMessage($payload, $podId);
+
+                if ($shouldExit) {
+                    // phpredis has no clean unsubscribe from within the callback;
+                    // closing the connection is the standard approach.
+                    $redis->close();
+                }
+            });
+        } catch (\Exception $e) {
+            // A closed connection throws; if it was intentional (--once) that's fine.
+            $this->logger->info('[Cache Subscriber] Subscription ended', ['pod' => $podId, 'reason' => $e->getMessage()]);
         }
     }
 
