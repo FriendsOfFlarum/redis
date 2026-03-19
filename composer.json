@@ -30,7 +30,7 @@
     },
     "require": {
         "flarum/core": "^2.0.0",
-        "illuminate/redis": "^11.0 || ^12.0",
+        "illuminate/redis": "^13.0",
         "predis/predis": "^v2.3.0"
     },
     "autoload": {
