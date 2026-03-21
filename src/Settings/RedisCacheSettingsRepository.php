@@ -44,7 +44,7 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
         $this->loading = true;
 
         try {
-            return $this->cache->remember($this->cacheKey, $this->ttl, function () {
+            return $this->cache->flexible($this->cacheKey, [$this->ttl - 300, $this->ttl], function () {
                 return $this->inner->all();
             });
         } finally {
