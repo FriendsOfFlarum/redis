@@ -84,7 +84,7 @@ class RedisQueueStatsProvider implements QueueStatsProvider
      */
     protected function pendingSize(string $queue): int
     {
-        if (! $this->queue instanceof RedisQueue) {
+        if (!$this->queue instanceof RedisQueue) {
             return 0;
         }
 
