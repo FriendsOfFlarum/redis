@@ -61,10 +61,17 @@ class Configuration
     {
         $config = $this->config;
 
-        // In case the configuration contains a `connections` key, we'll use that.
+        // A per-service `connections.<service>` block overrides connection
+        // details for that service. Merge it OVER the top-level config rather
+        // than replacing wholesale, so shared top-level keys (e.g. `prefix`,
+        // `pubsub`) still apply — otherwise stores would be built with an empty
+        // prefix and keys would collide with other apps on the same Redis.
         if ($connection = Arr::get($config, "connections.$service")) {
-            $config = $connection;
+            $config = array_merge($config, $connection);
         }
+
+        // The `connections` map itself is not a connection parameter.
+        Arr::forget($config, 'connections');
 
         $useDatabase = Arr::get($this->databases, $service, $config['database'] ?? 0);
 

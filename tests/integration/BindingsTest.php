@@ -86,6 +86,32 @@ class BindingsTest extends TestCase
     }
 
     #[Test]
+    public function server_info_works_when_the_cache_service_is_disabled()
+    {
+        // RedisServerInfo is registered whenever ANY Redis service is enabled,
+        // but it defaults to the 'fof.cache' connection — which only the Cache
+        // provider registers. With cache disabled but other services on, a
+        // naive RedisServerInfo would query an unregistered connection and sit
+        // in a permanent error state, breaking `redis:info` on an otherwise
+        // healthy install. It must resolve against a connection that actually
+        // exists.
+        $this->flushTestDatabases();
+        $this->extend(
+            (new Redis($this->redisConfig()))
+                ->useDatabaseWith('queue', $this->testQueueDb)
+                ->useDatabaseWith('session', $this->testSessionDb)
+                ->useDatabaseWith('settings', $this->testSettingsDb)
+                ->disable(['cache'])
+        );
+
+        $info = $this->app()->getContainer()->make(\FoF\Redis\RedisServerInfo::class);
+
+        $this->assertNotEmpty($info->section(), 'server info should read INFO even with cache disabled');
+        $this->assertFalse($info->hasError(), 'server info must not be in an error state when cache is disabled: '.$info->error());
+        $this->assertNotSame('unknown', $info->version());
+    }
+
+    #[Test]
     public function the_extender_forwards_and_chains_configuration_calls()
     {
         // useDatabaseWith / disable are Configuration methods reached through

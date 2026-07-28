@@ -91,6 +91,49 @@ class ConfigurationTest extends TestCase
     }
 
     #[Test]
+    public function for_preserves_top_level_prefix_when_using_a_per_service_connection_block()
+    {
+        // Top-level keys like `prefix` (and `pubsub`) apply to all services.
+        // When a per-service `connections.<service>` block is used, for() must
+        // still carry those top-level keys through — otherwise every RedisStore
+        // is built with an empty prefix (Cache/Session/Settings providers read
+        // `prefix` off the resolved config), so keys are written unprefixed and
+        // collide with any other app sharing the Redis instance.
+        $config = Configuration::make([
+            'prefix'      => 'myapp:',
+            'pubsub'      => ['enabled' => true, 'channel' => 'myapp:invalidate'],
+            'connections' => [
+                'cache'   => ['host' => 'cache.example', 'database' => 5],
+                'session' => ['host' => 'session.example', 'database' => 6],
+            ],
+        ]);
+
+        $cache = $config->for('cache')->toArray();
+        $this->assertSame('cache.example', $cache['host'], 'per-service host still applies');
+        $this->assertSame('myapp:', $cache['prefix'] ?? null, 'top-level prefix must be preserved');
+        $this->assertSame('myapp:invalidate', $cache['pubsub']['channel'] ?? null, 'top-level pubsub must be preserved');
+
+        // A per-service key overrides the top-level one; absent per-service, the
+        // top-level value wins.
+        $session = $config->for('session')->toArray();
+        $this->assertSame('myapp:', $session['prefix'] ?? null);
+    }
+
+    #[Test]
+    public function a_per_service_block_can_override_a_top_level_key()
+    {
+        // If a service block sets its own prefix, that wins over the top-level.
+        $config = Configuration::make([
+            'prefix'      => 'global:',
+            'connections' => [
+                'cache' => ['host' => 'cache.example', 'prefix' => 'cacheonly:'],
+            ],
+        ]);
+
+        $this->assertSame('cacheonly:', $config->for('cache')->toArray()['prefix']);
+    }
+
+    #[Test]
     public function use_database_with_overrides_a_per_service_connection_block_database()
     {
         $config = Configuration::make([

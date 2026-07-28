@@ -100,6 +100,42 @@ class SettingsTest extends TestCase
     }
 
     #[Test]
+    public function set_keeps_the_flexible_created_timestamp_in_sync()
+    {
+        // all() stores via cache->flexible(), which writes TWO keys: the value
+        // and a companion 'illuminate:cache:flexible:created:flarum:settings'
+        // timestamp used to decide staleness. If set() patches only the value
+        // and leaves the created timestamp old, the next all() judges the
+        // freshly-set value STALE and defers a refresh from the database —
+        // which, on a lagging read replica, re-populates the OLD value,
+        // defeating the in-place patch's whole purpose. So set() must keep the
+        // created timestamp in sync with the value it writes.
+        $cache = $this->settingsCache();
+        $inner = $this->app()->getContainer()->make(\Flarum\Settings\DatabaseSettingsRepository::class);
+        $repo = new RedisCacheSettingsRepository($inner, $cache);
+        $createdKey = 'illuminate:cache:flexible:created:flarum:settings';
+
+        // Warm the cache (writes value + created).
+        $repo->all();
+
+        // Age the created timestamp into the stale window (ttl[0] = 3600-300 =
+        // 3300s), as if the cache had been filled ~an hour ago.
+        $cache->forever($createdKey, \Illuminate\Support\Carbon::now()->subSeconds(3400)->getTimestamp());
+
+        // Set a new value through the repo.
+        $repo->set('fof-redis.sync', 'fresh-value');
+
+        // The created timestamp must now be recent — NOT still in the stale
+        // window — so the value we just set is treated as fresh.
+        $created = (int) $cache->get($createdKey);
+        $this->assertGreaterThan(
+            \Illuminate\Support\Carbon::now()->subSeconds(3300)->getTimestamp(),
+            $created,
+            'set() must refresh the flexible created-timestamp so the new value is not immediately stale'
+        );
+    }
+
+    #[Test]
     public function delete_removes_the_key_from_the_cached_array_in_place()
     {
         $this->settings()->set('fof-redis.temp', 'value');
