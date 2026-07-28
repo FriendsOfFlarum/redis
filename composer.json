@@ -29,7 +29,7 @@
         }
     },
     "require": {
-        "flarum/core": "^2.0.0",
+        "flarum/core": "2.x-dev",
         "illuminate/redis": "^13.0",
         "predis/predis": "^v2.3.0"
     },
@@ -45,7 +45,7 @@
     },
     "require-dev": {
         "flarum/phpstan": "2.x-dev",
-        "flarum/testing": "^2.0.0"
+        "flarum/testing": "2.x-dev"
     },
     "scripts": {
         "test": [
