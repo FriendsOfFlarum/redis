@@ -74,13 +74,21 @@ class RedisQueueStatsProvider implements QueueStatsProvider
     }
 
     /**
-     * Jobs waiting to be picked up (the queue list).
+     * Jobs that are queued but not yet reserved by a worker.
+     *
+     * This counts both the ready list AND the delayed set, to match core's
+     * DatabaseQueueStatsProvider, which counts every `queue_jobs` row with a
+     * NULL `reserved_at` as pending — delayed jobs included (they sit in the
+     * same table with a future `available_at`). Counting only the ready list
+     * (llen) would report an idle queue while jobs are scheduled for later.
      */
     protected function pendingSize(string $queue): int
     {
-        return $this->queue instanceof RedisQueue
-            ? (int) $this->queue->pendingSize($queue)
-            : 0;
+        if (! $this->queue instanceof RedisQueue) {
+            return 0;
+        }
+
+        return (int) $this->queue->pendingSize($queue) + (int) $this->queue->delayedSize($queue);
     }
 
     /**

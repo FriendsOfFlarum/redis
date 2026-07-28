@@ -91,7 +91,13 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
             'queue'      => $queue,
             'payload'    => $payload,
             'exception'  => (string) mb_convert_encoding((string) $exception, 'UTF-8'),
-            'failed_at'  => $failedAt->getTimestamp(),
+            // Store a date STRING, not a unix timestamp: core's failed-job UI
+            // renders this with `new Date(failed_at)`, and a bare integer string
+            // (which phpredis returns from the hash) parses to Invalid Date in
+            // JS. ISO-8601 matches the datetime the database failer produces and
+            // is unambiguously parseable. (The sorted-set index below keeps the
+            // numeric timestamp for ordering and prune-by-age.)
+            'failed_at'  => $failedAt->toIso8601String(),
         ]);
 
         // A TTL bounds memory growth and, under a volatile-* eviction policy,

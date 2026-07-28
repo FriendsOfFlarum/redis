@@ -92,6 +92,33 @@ class RedisQueueStatsProviderTest extends TestCase
     }
 
     #[Test]
+    public function delayed_jobs_are_counted_as_pending()
+    {
+        // Core's DatabaseQueueStatsProvider counts every not-yet-reserved job
+        // as pending — including delayed ones, which sit in queue_jobs with a
+        // future available_at and NULL reserved_at. The Redis provider must
+        // match: a delayed job (in the ':delayed' zset) has to show up in
+        // pending, otherwise the dashboard reports an idle queue while jobs are
+        // scheduled. Counting only the ready list (llen) misses them.
+        $queue = $this->app()->getContainer()->make('flarum.queue.connection');
+
+        // One ready now (ready list)...
+        $queue->pushRaw(json_encode(['uuid' => 'ready', 'displayName' => 'X']), 'default');
+        // ...and two scheduled for later. A delayed job lives in the
+        // 'queues:default:delayed' sorted set, scored by its available-at time
+        // (exactly what RedisQueue::laterRaw writes). Insert them directly since
+        // laterRaw is protected.
+        $raw = $this->rawRedis($this->testQueueDb);
+        $availableAt = time() + 3600;
+        $raw->zadd('queues:default:delayed', $availableAt, json_encode(['uuid' => 'later-1', 'displayName' => 'X']));
+        $raw->zadd('queues:default:delayed', $availableAt, json_encode(['uuid' => 'later-2', 'displayName' => 'X']));
+
+        $totals = $this->stats()->totals();
+        $this->assertSame(3, $totals['pending'], 'pending must include the 1 ready + 2 delayed jobs');
+        $this->assertSame(3, $this->stats()->queues()['default']['pending']);
+    }
+
+    #[Test]
     public function configured_named_queues_are_registered_and_reported()
     {
         // A site that runs `queue:work --queue=emails,default` declares those
