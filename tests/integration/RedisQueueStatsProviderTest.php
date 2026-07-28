@@ -28,22 +28,34 @@ class RedisQueueStatsProviderTest extends TestCase
     {
         parent::setUp();
 
-        // Use high, dedicated Redis databases for tests. A local dev stack may
-        // have a real `queue:work` worker draining the usual queue database
-        // (1-3) on the same Redis server, which would consume the jobs these
-        // tests push and make assertions flaky. Databases 13-15 are reserved
-        // for the test suite and touched by nothing else. (CI runs a dedicated
-        // Redis with no worker, so this is belt-and-suspenders there.)
-        $this->extend(
-            (new Redis($this->redisConfig()))
-                ->useDatabaseWith('cache', 13)
-                ->useDatabaseWith('queue', 14)
-                ->useDatabaseWith('session', 15)
-        );
+        $this->registerRedis();
 
         // Start from a clean queue database. Tests share one Redis instance, so
         // residue from a previous test would otherwise skew the counts here.
         $this->flushQueueDatabase();
+    }
+
+    /**
+     * Register the Redis extender. Tests share one Redis instance, so use high,
+     * dedicated databases (13-15): a local dev stack may run a `queue:work`
+     * worker on the usual queue database on the same server, which would
+     * consume the jobs these tests push and make assertions flaky. (CI uses a
+     * dedicated Redis with no worker, so this is belt-and-suspenders there.)
+     *
+     * @param array $queueConfig extra keys merged into the `queue` config block
+     */
+    protected function registerRedis(array $queueConfig = []): void
+    {
+        $config = $this->redisConfig();
+        $config['queue'] = array_merge($config['queue'] ?? [], $queueConfig);
+
+        $this->extend(
+            (new Redis($config))
+                ->useDatabaseWith('cache', 13)
+                ->useDatabaseWith('queue', 14)
+                ->useDatabaseWith('session', 15)
+                ->useDatabaseWith('settings', 12)
+        );
     }
 
     protected function tearDown(): void
@@ -55,8 +67,25 @@ class RedisQueueStatsProviderTest extends TestCase
 
     protected function flushQueueDatabase(): void
     {
+        // Flush directly via a raw client rather than through the container, so
+        // this does NOT boot the app. Booting here would lock in the extenders
+        // registered so far, preventing a test from registering extra queue
+        // config (which must happen before boot).
         try {
-            $this->app()->getContainer()->make(Factory::class)->connection('default')->flushdb();
+            $config = $this->redisConfig();
+            $host = $config['host'];
+            $port = (int) $config['port'];
+
+            if (extension_loaded('redis')) {
+                $client = new \Redis();
+                $client->connect($host, $port);
+                $client->select(14); // the dedicated test queue database
+                $client->flushdb();
+                $client->close();
+            } else {
+                $client = new \Predis\Client(['scheme' => 'tcp', 'host' => $host, 'port' => $port, 'database' => 14]);
+                $client->flushdb();
+            }
         } catch (\Throwable $e) {
             // Redis not reachable — a redis-dependent test will fail loudly.
         }
@@ -114,5 +143,43 @@ class RedisQueueStatsProviderTest extends TestCase
         $failer->log('redis', 'default', json_encode(['uuid' => 'f1', 'displayName' => 'X']), new \RuntimeException('x'));
 
         $this->assertSame(1, $this->stats()->totals()['failed']);
+    }
+
+    #[Test]
+    public function configured_named_queues_are_registered_and_reported()
+    {
+        // A site that runs `queue:work --queue=emails,default` declares those
+        // names in the fof/redis `queue.queues` config; fof/redis appends them
+        // to core's known-queues registry so admin tooling (the dashboard,
+        // per-queue pause) covers them.
+        $this->registerRedis(['queues' => ['emails', 'notifications']]);
+
+        // The core registry now includes the configured names plus 'default'.
+        $known = $this->app()->getContainer()->make('flarum.queue.queues');
+        $this->assertEqualsCanonicalizing(['default', 'emails', 'notifications'], $known);
+
+        // And the stats provider reports a bucket for each.
+        $queues = $this->stats()->queues();
+        $this->assertArrayHasKey('default', $queues);
+        $this->assertArrayHasKey('emails', $queues);
+        $this->assertArrayHasKey('notifications', $queues);
+    }
+
+    #[Test]
+    public function totals_sum_pending_across_named_queues()
+    {
+        $this->registerRedis(['queues' => ['emails']]);
+
+        $queue = $this->app()->getContainer()->make('flarum.queue.connection');
+        $queue->pushRaw(json_encode(['uuid' => 'd1', 'displayName' => 'X']), 'default');
+        $queue->pushRaw(json_encode(['uuid' => 'e1', 'displayName' => 'X']), 'emails');
+        $queue->pushRaw(json_encode(['uuid' => 'e2', 'displayName' => 'X']), 'emails');
+
+        $totals = $this->stats()->totals();
+        $this->assertSame(3, $totals['pending']);
+
+        $queues = $this->stats()->queues();
+        $this->assertSame(1, $queues['default']['pending']);
+        $this->assertSame(2, $queues['emails']['pending']);
     }
 }

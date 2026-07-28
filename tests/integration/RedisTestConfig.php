@@ -28,7 +28,13 @@ trait RedisTestConfig
             'host'        => getenv('REDIS_HOST') ?: '127.0.0.1',
             'password'    => null,
             'port'        => (int) (getenv('REDIS_PORT') ?: 6379),
-            'database'    => 1,
+            // Base database for any service without an explicit useDatabaseWith
+            // override. Deliberately high: a local dev stack keeps its cache /
+            // settings on low databases (0-4) of the same Redis server, and a
+            // service that fell back to those would let tests overwrite the dev
+            // forum's live data (e.g. the settings cache). 12 is reserved for
+            // the suite, distinct from the queue/cache/session test databases.
+            'database'    => 12,
             'prefix'      => '',
             'pubsub'      => [
                 'enabled'   => true,

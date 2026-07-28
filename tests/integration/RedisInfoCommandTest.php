@@ -25,11 +25,18 @@ class RedisInfoCommandTest extends ConsoleTestCase
     {
         parent::setUp();
 
+        // Use high, dedicated Redis databases for tests. A local dev stack
+        // keeps its cache/queue/session on low databases (1-3) of the same
+        // Redis server; tests that used those would clear the dev forum's live
+        // cache (its settings cache included, making extensions look disabled).
+        // Databases 12-15 are reserved for the suite. (CI uses a dedicated
+        // Redis, so this is belt-and-suspenders there.)
         $this->extend(
             (new Redis($this->redisConfig()))
-                ->useDatabaseWith('cache', 1)
-                ->useDatabaseWith('queue', 2)
-                ->useDatabaseWith('session', 3)
+                ->useDatabaseWith('cache', 13)
+                ->useDatabaseWith('queue', 14)
+                ->useDatabaseWith('session', 15)
+                ->useDatabaseWith('settings', 12)
         );
     }
 

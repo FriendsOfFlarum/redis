@@ -59,6 +59,27 @@ class Queue extends Provider
             return $queue;
         });
 
+        // Register any additional named queues the site runs.
+        //
+        // Redis (like Horizon) supports multiple named queues — a worker is
+        // started with `queue:work --queue=high,default,low` and jobs are
+        // routed to a queue via `AbstractJob::$onQueue`. There is no cheap way
+        // to enumerate queues in Redis (KEYS is O(n) and blocks the server), so
+        // core keeps a registry of known queue names (`flarum.queue.queues`,
+        // default `['default']`) that admin tooling — the queue dashboard and
+        // per-queue pause — reads. A site declares its queue names in the
+        // `queue.queues` config; we append them here so those tools cover them.
+        $container->extend('flarum.queue.queues', function ($queues) use ($configuration) {
+            $config = Arr::get($configuration->toArray(), 'queue', []);
+            $configured = Arr::get($config, 'queues', []);
+
+            return array_values(array_unique(array_merge(
+                is_array($queues) ? $queues : ['default'],
+                ['default'],
+                (array) $configured
+            )));
+        });
+
         // Store failed jobs in Redis rather than losing them.
         //
         // Core only wires a real failer for the database queue; every other

@@ -31,16 +31,20 @@ class RedisFailedJobProviderTest extends TestCase
         parent::setUp();
 
         // Use high, dedicated Redis databases for tests. A local dev stack may
-        // have a real `queue:work` worker draining the usual queue database
-        // (1-3) on the same Redis server, which would consume the jobs these
-        // tests push and make assertions flaky. Databases 13-15 are reserved
-        // for the test suite and touched by nothing else. (CI runs a dedicated
-        // Redis with no worker, so this is belt-and-suspenders there.)
+        // run a `queue:work` worker on the usual queue database, and keeps its
+        // cache/settings on low databases, all on the same Redis server. Tests
+        // that fell back onto those would consume the dev worker's jobs or
+        // overwrite the dev forum's live cache/settings. Databases 12-15 are
+        // reserved for the suite. Every service is pinned explicitly — an
+        // unpinned service falls back to the base `database`, which must never
+        // be a live one (see RedisTestConfig). (CI uses a dedicated Redis, so
+        // this is belt-and-suspenders there.)
         $this->extend(
             (new Redis($this->redisConfig()))
                 ->useDatabaseWith('cache', 13)
                 ->useDatabaseWith('queue', 14)
                 ->useDatabaseWith('session', 15)
+                ->useDatabaseWith('settings', 12)
         );
 
         // Start from a clean queue database. Tests share one Redis instance, so
@@ -57,8 +61,23 @@ class RedisFailedJobProviderTest extends TestCase
 
     protected function flushQueueDatabase(): void
     {
+        // Flush directly via a raw client rather than through the container, so
+        // this does not boot the app before the test has finished registering.
         try {
-            $this->app()->getContainer()->make(Factory::class)->connection('default')->flushdb();
+            $config = $this->redisConfig();
+            $host = $config['host'];
+            $port = (int) $config['port'];
+
+            if (extension_loaded('redis')) {
+                $client = new \Redis();
+                $client->connect($host, $port);
+                $client->select(14); // the dedicated test queue database
+                $client->flushdb();
+                $client->close();
+            } else {
+                $client = new \Predis\Client(['scheme' => 'tcp', 'host' => $host, 'port' => $port, 'database' => 14]);
+                $client->flushdb();
+            }
         } catch (\Throwable $e) {
             // Redis not reachable — the test that needs it will fail loudly.
         }
