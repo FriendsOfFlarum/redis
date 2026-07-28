@@ -60,6 +60,36 @@ class RedisFailedJobProviderTest extends TestCase
     }
 
     #[Test]
+    public function failed_at_is_a_parseable_date_string_not_a_unix_timestamp()
+    {
+        // The admin failed-jobs UI renders failed_at with `new Date(job.failed_at)`
+        // (core FailedJobsModal). A bare unix-seconds value — which phpredis
+        // returns from the hash as a numeric string like "1753358400" — parses
+        // to `Invalid Date` in JS. The DB failer stores a datetime string, so
+        // the Redis failer must match: failed_at has to be a date string that
+        // JS `Date` can parse, not a plain integer.
+        $failer = $this->failer();
+        $id = $failer->log('redis', 'default', $this->payload('date-check'), new \RuntimeException('x'));
+
+        $failedAt = $failer->find($id)->failed_at;
+
+        // Must NOT be a bare all-digits unix timestamp.
+        $this->assertDoesNotMatchRegularExpression(
+            '/^\d+$/',
+            (string) $failedAt,
+            'failed_at must not be a bare unix timestamp (JS `new Date()` cannot parse it)'
+        );
+        // Must be parseable as a real date (strtotime mirrors JS Date parsing
+        // closely enough for the ISO-8601 / datetime forms we care about).
+        $ts = strtotime((string) $failedAt);
+        $this->assertNotFalse($ts, "failed_at '$failedAt' is not a parseable date string");
+        // And it should be recent (within the last minute), i.e. it really is
+        // the failure time, not an epoch/garbage value.
+        $this->assertGreaterThan(time() - 60, $ts);
+        $this->assertLessThanOrEqual(time() + 60, $ts);
+    }
+
+    #[Test]
     public function it_logs_and_finds_a_failed_job_with_the_expected_shape()
     {
         $failer = $this->failer();
