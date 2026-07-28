@@ -75,13 +75,13 @@ class CacheSubscribeCommand extends AbstractCommand
      */
     public function resolveChannel(?string $option): string
     {
-        if (! empty($option)) {
+        if (!empty($option)) {
             return $option;
         }
 
         $configured = Arr::get($this->configuration->toArray(), 'pubsub.channel');
 
-        return ! empty($configured) ? $configured : self::DEFAULT_CHANNEL;
+        return !empty($configured) ? $configured : self::DEFAULT_CHANNEL;
     }
 
     protected function fire(): int
