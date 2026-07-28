@@ -94,4 +94,32 @@ class SessionTest extends TestCase
         $this->assertTrue($restored->write($id, 'after-wakeup'));
         $this->assertSame('after-wakeup', $restored->read($id));
     }
+
+    #[Test]
+    public function a_woken_handler_still_uses_the_session_database()
+    {
+        // __wakeup must re-resolve the SESSION store, not the general cache
+        // store. When cache and session are pinned to different Redis
+        // databases (as the README recommends), a handler that woke up onto
+        // the cache database would read/write sessions in the wrong place —
+        // sessions written before serialization would vanish afterwards.
+        $restored = unserialize(serialize($this->handler()));
+
+        $id = 'fof-redis-session-db-'.bin2hex(random_bytes(8));
+        $restored->write($id, 'must-be-in-session-db');
+
+        // The session data must land in the session database...
+        $sessionDb = $this->rawRedis($this->testSessionDb);
+        $this->assertNotEmpty(
+            $sessionDb->keys('*'.$id.'*'),
+            'a woken session handler should write to the session database'
+        );
+
+        // ...and NOT in the cache database.
+        $cacheDb = $this->rawRedis($this->testCacheDb);
+        $this->assertEmpty(
+            $cacheDb->keys('*'.$id.'*'),
+            'a woken session handler must not write sessions to the cache database'
+        );
+    }
 }

@@ -13,6 +13,7 @@
 
 namespace FoF\Redis\Session;
 
+use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Session\CacheBasedSessionHandler;
 
 class RedisSessionHandler extends CacheBasedSessionHandler
@@ -24,6 +25,12 @@ class RedisSessionHandler extends CacheBasedSessionHandler
 
     public function __wakeup(): void
     {
-        $this->cache = resolve('cache.store');
+        // Re-resolve the SESSION store (dropped by __sleep because the Redis
+        // client isn't serialisable), not the general cache store. Resolving
+        // `cache.store` here would make a woken handler read and write sessions
+        // in the cache database — wrong whenever sessions and cache are pinned
+        // to different Redis databases. Rebuild the same repository the Session
+        // provider wraps around `session.redisstore`.
+        $this->cache = new CacheRepository(resolve('session.redisstore'));
     }
 }

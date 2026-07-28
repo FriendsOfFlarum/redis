@@ -63,10 +63,11 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
     {
         $this->inner->set($key, $value);
 
-        // Update the cache in-place to avoid a stale read-replica re-populating it.
-        // Environments with a read/write DB split (no `sticky` connection) would
-        // otherwise re-read the old value from the replica after forget().
-        // If the cache is cold, drop it entirely so the next all() re-builds from DB.
+        // Patch the cached array in place so a warm cache reflects the new value
+        // without re-reading the database — which, on a read/write split with no
+        // `sticky` connection, could otherwise re-populate a stale value from a
+        // lagging replica. If the cache is cold there is nothing to patch; the
+        // next all() rebuilds it from the database on its own.
         $all = $this->cache->get($this->cacheKey);
 
         if (is_array($all)) {
