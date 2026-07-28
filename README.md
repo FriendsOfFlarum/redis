@@ -227,7 +227,7 @@ return [
 #### Queue
 
 Make sure to start your queue workers, see 
-the [laravel documentation](https://laravel.com/docs/11.x/queues#running-the-queue-worker) for specifics. 
+the [laravel documentation](https://laravel.com/docs/13.x/queues#running-the-queue-worker) for specifics. 
 To test the worker can start use `php flarum queue:work`.
 
 ##### Queue options
@@ -256,7 +256,7 @@ return [
 ```
 
 You can read up on the meaning of `retry_after`, `block_for` and `after_commit` in the
-[Laravel Documentation](https://laravel.com/docs/12.x/queues#redis).
+[Laravel Documentation](https://laravel.com/docs/13.x/queues#redis).
 
 ##### Failed jobs
 
