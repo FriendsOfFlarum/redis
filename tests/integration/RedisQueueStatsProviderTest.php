@@ -15,7 +15,6 @@ namespace FoF\Redis\Tests\integration;
 
 use Flarum\Queue\QueueStatsProvider;
 use Flarum\Testing\integration\TestCase;
-use FoF\Redis\Extend\Redis;
 use FoF\Redis\Queue\RedisQueueStatsProvider;
 use PHPUnit\Framework\Attributes\Test;
 
@@ -27,67 +26,15 @@ class RedisQueueStatsProviderTest extends TestCase
     {
         parent::setUp();
 
+        $this->flushTestDatabases();
         $this->registerRedis();
-
-        // Start from a clean queue database. Tests share one Redis instance, so
-        // residue from a previous test would otherwise skew the counts here.
-        $this->flushQueueDatabase();
-    }
-
-    /**
-     * Register the Redis extender. Tests share one Redis instance, so use high,
-     * dedicated databases (13-15): a local dev stack may run a `queue:work`
-     * worker on the usual queue database on the same server, which would
-     * consume the jobs these tests push and make assertions flaky. (CI uses a
-     * dedicated Redis with no worker, so this is belt-and-suspenders there.).
-     *
-     * @param array $queueConfig extra keys merged into the `queue` config block
-     */
-    protected function registerRedis(array $queueConfig = []): void
-    {
-        $config = $this->redisConfig();
-        $config['queue'] = array_merge($config['queue'] ?? [], $queueConfig);
-
-        $this->extend(
-            (new Redis($config))
-                ->useDatabaseWith('cache', 13)
-                ->useDatabaseWith('queue', 14)
-                ->useDatabaseWith('session', 15)
-                ->useDatabaseWith('settings', 12)
-        );
     }
 
     protected function tearDown(): void
     {
-        $this->flushQueueDatabase();
+        $this->flushTestDatabases();
 
         parent::tearDown();
-    }
-
-    protected function flushQueueDatabase(): void
-    {
-        // Flush directly via a raw client rather than through the container, so
-        // this does NOT boot the app. Booting here would lock in the extenders
-        // registered so far, preventing a test from registering extra queue
-        // config (which must happen before boot).
-        try {
-            $config = $this->redisConfig();
-            $host = $config['host'];
-            $port = (int) $config['port'];
-
-            if (extension_loaded('redis')) {
-                $client = new \Redis();
-                $client->connect($host, $port);
-                $client->select(14); // the dedicated test queue database
-                $client->flushdb();
-                $client->close();
-            } else {
-                $client = new \Predis\Client(['scheme' => 'tcp', 'host' => $host, 'port' => $port, 'database' => 14]);
-                $client->flushdb();
-            }
-        } catch (\Throwable $e) {
-            // Redis not reachable — a redis-dependent test will fail loudly.
-        }
     }
 
     protected function stats(): QueueStatsProvider
