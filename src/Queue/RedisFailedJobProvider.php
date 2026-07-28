@@ -14,10 +14,10 @@
 namespace FoF\Redis\Queue;
 
 use Illuminate\Contracts\Redis\Factory;
-use Illuminate\Redis\Connections\Connection;
 use Illuminate\Queue\Failed\CountableFailedJobProvider;
 use Illuminate\Queue\Failed\FailedJobProviderInterface;
 use Illuminate\Queue\Failed\PrunableFailedJobProvider;
+use Illuminate\Redis\Connections\Connection;
 use Illuminate\Support\Carbon;
 
 /**
@@ -43,16 +43,16 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
     protected string $jobKeyPrefix;
 
     /**
-     * @param  Factory  $redis        the Redis connection factory
-     * @param  string   $connectionName  the queue's Redis connection name
-     * @param  int|null $ttl          seconds to keep a failed job before it
-     *                                expires; null/0 keeps it until forgotten.
-     *                                A TTL also makes the entry eligible for
-     *                                eviction under a `volatile-*` maxmemory
-     *                                policy, so failures can be reclaimed under
-     *                                memory pressure while untagged keys (live
-     *                                queue jobs, cache) are protected.
-     * @param  string   $prefix       key prefix for the index/hashes
+     * @param Factory  $redis          the Redis connection factory
+     * @param string   $connectionName the queue's Redis connection name
+     * @param int|null $ttl            seconds to keep a failed job before it
+     *                                 expires; null/0 keeps it until forgotten.
+     *                                 A TTL also makes the entry eligible for
+     *                                 eviction under a `volatile-*` maxmemory
+     *                                 policy, so failures can be reclaimed under
+     *                                 memory pressure while untagged keys (live
+     *                                 queue jobs, cache) are protected.
+     * @param string   $prefix         key prefix for the index/hashes
      */
     public function __construct(
         protected Factory $redis,
@@ -67,10 +67,11 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
     /**
      * Log a failed job into Redis.
      *
-     * @param  string  $connection
-     * @param  string  $queue
-     * @param  string  $payload
-     * @param  \Throwable  $exception
+     * @param string     $connection
+     * @param string     $queue
+     * @param string     $payload
+     * @param \Throwable $exception
+     *
      * @return string|int|null
      */
     public function log($connection, $queue, $payload, $exception)
@@ -110,7 +111,8 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
      * Get the IDs of all of the failed jobs (optionally for one queue),
      * newest first.
      *
-     * @param  string|null  $queue
+     * @param string|null $queue
+     *
      * @return array
      */
     public function ids($queue = null)
@@ -167,7 +169,8 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
     /**
      * Get a single failed job as an object matching the DB failer's shape.
      *
-     * @param  mixed  $id
+     * @param mixed $id
+     *
      * @return object|null
      */
     public function find($id)
@@ -184,7 +187,8 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
     /**
      * Delete a single failed job from storage.
      *
-     * @param  mixed  $id
+     * @param mixed $id
+     *
      * @return bool
      */
     public function forget($id)
@@ -200,7 +204,8 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
     /**
      * Flush all (or old) failed jobs from storage.
      *
-     * @param  int|null  $hours
+     * @param int|null $hours
+     *
      * @return void
      */
     public function flush($hours = null)
@@ -237,7 +242,7 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
             $connection->del($this->jobKeyPrefix.$id);
         }
 
-        if (! empty($ids)) {
+        if (!empty($ids)) {
             $connection->zremrangebyscore($this->indexKey, '-inf', $cutoff);
         }
 
@@ -247,8 +252,9 @@ class RedisFailedJobProvider implements CountableFailedJobProvider, FailedJobPro
     /**
      * Count the failed jobs (optionally for one connection/queue).
      *
-     * @param  string|null  $connection
-     * @param  string|null  $queue
+     * @param string|null $connection
+     * @param string|null $queue
+     *
      * @return int
      */
     public function count($connection = null, $queue = null)
