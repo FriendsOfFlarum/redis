@@ -82,14 +82,31 @@ class RedisInfoCommand extends AbstractCommand
         try {
             /** @var RedisManager $manager */
             $manager = resolve(RedisManager::class);
-            $result = $manager->connection('fof.cache')->command('pubsub', ['numsub', $channel]);
+            $client = $manager->connection('fof.cache')->client();
 
-            /** @var array<string, int> $numsub */
-            $numsub = $result;
+            // PUBSUB NUMSUB channel-list. The two supported clients disagree on
+            // how the channel argument must be passed and reject the other's
+            // form: phpredis (\Redis) wants the channels as an array and errors
+            // on a bare string ("Invalid channels value"); predis wants a
+            // string and mangles an array ("Array to string conversion").
+            // Branch on the client so each gets the form it accepts. Both then
+            // return an associative [channel => count] map.
+            if ($client instanceof \Redis) {
+                /** @var array<string, int> $numsub */
+                $numsub = $client->pubsub('numsub', [$channel]);
+            } elseif ($client instanceof \Predis\Client) {
+                /** @var array<string, int> $numsub */
+                $numsub = $client->pubsub('numsub', $channel);
+            } else {
+                $this->output->writeln('<comment>Pub/sub subscriber count unavailable: unsupported Redis client '.get_class($client).'</comment>');
+
+                return;
+            }
+
             $count = $numsub[$channel] ?? 0;
 
             $this->output->writeln('<info>Pub/sub subscribers:</info> '.$count);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             $this->output->writeln('<comment>Pub/sub subscriber count unavailable: '.$e->getMessage().'</comment>');
         }
     }
