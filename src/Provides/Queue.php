@@ -13,9 +13,12 @@
 
 namespace FoF\Redis\Provides;
 
+use Flarum\Queue\QueueStatsProvider;
 use FoF\Redis\Configuration;
 use FoF\Redis\Overrides\RedisManager;
 use FoF\Redis\Overrides\RedisQueue;
+use FoF\Redis\Queue\RedisFailedJobProvider;
+use FoF\Redis\Queue\RedisQueueStatsProvider;
 use Illuminate\Contracts\Container\Container;
 use Illuminate\Contracts\Redis\Factory;
 use Illuminate\Support\Arr;
@@ -49,5 +52,38 @@ class Queue extends Provider
 
             return $queue;
         });
+
+        // Store failed jobs in Redis rather than losing them.
+        //
+        // Core only wires a real failer for the database queue; every other
+        // driver gets a NullFailedJobProvider that discards failures. An admin
+        // on fof/redis has deliberately moved load off the database, so their
+        // failures belong in Redis too — not back in the DB. Overriding the
+        // `queue.failer` binding here keeps them in Redis and makes core's
+        // failed-job management UI (view/retry/delete) work under Redis.
+        $container->singleton('queue.failer', function ($container) use ($configuration) {
+            $config = Arr::get($configuration->toArray(), 'queue', []);
+
+            return new RedisFailedJobProvider(
+                $container->make(Factory::class),
+                $this->connection,
+                // Default: keep a week of failure history, then let it expire.
+                // Set queue.failed_ttl to 0/null to keep failures indefinitely.
+                Arr::get($config, 'failed_ttl', 604800)
+            );
+        });
+
+        // Feed core's queue dashboard from Redis instead of the (now empty)
+        // queue_jobs table. Only meaningful on core builds that ship the
+        // QueueStatsProvider contract; guarded so older cores are unaffected.
+        if (interface_exists(QueueStatsProvider::class)) {
+            $container->singleton(QueueStatsProvider::class, function ($container) {
+                return new RedisQueueStatsProvider(
+                    $container->make('flarum.queue.connection'),
+                    $container->make('queue.failer'),
+                    $container->make('flarum.queue.queues')
+                );
+            });
+        }
     }
 }
