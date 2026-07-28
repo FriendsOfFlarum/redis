@@ -17,7 +17,6 @@ use Flarum\Queue\QueueStatsProvider;
 use Flarum\Testing\integration\TestCase;
 use FoF\Redis\Extend\Redis;
 use FoF\Redis\Queue\RedisQueueStatsProvider;
-use Illuminate\Contracts\Redis\Factory;
 use PHPUnit\Framework\Attributes\Test;
 
 class RedisQueueStatsProviderTest extends TestCase
@@ -40,7 +39,7 @@ class RedisQueueStatsProviderTest extends TestCase
      * dedicated databases (13-15): a local dev stack may run a `queue:work`
      * worker on the usual queue database on the same server, which would
      * consume the jobs these tests push and make assertions flaky. (CI uses a
-     * dedicated Redis with no worker, so this is belt-and-suspenders there.)
+     * dedicated Redis with no worker, so this is belt-and-suspenders there.).
      *
      * @param array $queueConfig extra keys merged into the `queue` config block
      */
