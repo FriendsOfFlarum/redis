@@ -30,24 +30,38 @@ class RedisFailedJobProviderTest extends TestCase
     {
         parent::setUp();
 
+        // Use high, dedicated Redis databases for tests. A local dev stack may
+        // have a real `queue:work` worker draining the usual queue database
+        // (1-3) on the same Redis server, which would consume the jobs these
+        // tests push and make assertions flaky. Databases 13-15 are reserved
+        // for the test suite and touched by nothing else. (CI runs a dedicated
+        // Redis with no worker, so this is belt-and-suspenders there.)
         $this->extend(
             (new Redis($this->redisConfig()))
-                ->useDatabaseWith('cache', 1)
-                ->useDatabaseWith('queue', 2)
-                ->useDatabaseWith('session', 3)
+                ->useDatabaseWith('cache', 13)
+                ->useDatabaseWith('queue', 14)
+                ->useDatabaseWith('session', 15)
         );
+
+        // Start from a clean queue database. Tests share one Redis instance, so
+        // residue from a previous test would otherwise skew the counts here.
+        $this->flushQueueDatabase();
     }
 
     protected function tearDown(): void
     {
-        // Wipe the queue DB so failed-job state never leaks between tests.
+        $this->flushQueueDatabase();
+
+        parent::tearDown();
+    }
+
+    protected function flushQueueDatabase(): void
+    {
         try {
             $this->app()->getContainer()->make(Factory::class)->connection('default')->flushdb();
         } catch (\Throwable $e) {
             // Redis not reachable — the test that needs it will fail loudly.
         }
-
-        parent::tearDown();
     }
 
     protected function failer(): RedisFailedJobProvider

@@ -34,7 +34,13 @@ class Queue extends Provider
             $manager->addConnection($this->connection, $configuration->toArray());
         });
 
-        $container->bind('flarum.queue.connection', function ($container) use ($configuration) {
+        // Bind as a singleton, matching core's own `flarum.queue.connection`
+        // binding. A transient binding would open a fresh Redis connection on
+        // every resolution — wasteful, and it means a component that resolves
+        // the queue separately (e.g. the stats provider) reads through a
+        // brand-new connection that may not yet observe a write made on another
+        // connection microseconds earlier. One shared connection avoids both.
+        $container->singleton('flarum.queue.connection', function ($container) use ($configuration) {
             $config = Arr::get($configuration->toArray(), 'queue', []);
 
             /** @var RedisManager $manager */

@@ -245,7 +245,8 @@ return [
         'queue' => [
             'retry_after' => 120, // seconds
             'block_for' => 5, // seconds
-            'after_commit' => true 
+            'after_commit' => true,
+            'failed_ttl' => 604800, // seconds; how long to keep failed jobs (default 7 days)
         ]       
     ]))
     ->useDatabaseWith('cache', 1)
@@ -254,7 +255,22 @@ return [
 ];
 ```
 
-You can read up on the meaning of these options in the [Laravel Documentation](https://laravel.com/docs/12.x/queues#redis).
+You can read up on the meaning of `retry_after`, `block_for` and `after_commit` in the
+[Laravel Documentation](https://laravel.com/docs/12.x/queues#redis).
+
+##### Failed jobs
+
+When the queue runs on Redis, failed jobs are stored **in Redis** rather than in the database. Flarum
+core only records failed jobs in the database for the database queue driver; with this extension enabled,
+your failures stay on Redis so they don't add load or writes to your database. They remain fully visible
+and manageable from the admin queue dashboard (view, retry, and delete), and via the
+`php flarum queue:failed`, `queue:retry` and `queue:forget` commands.
+
+Failed jobs are given a time-to-live so they don't accumulate forever, controlled by `failed_ttl` (seconds)
+in the `queue` config above. It defaults to **7 days** (`604800`). Set it to `0` or `null` to keep failed
+jobs until they are retried or deleted. Because these entries carry a TTL, they are also eligible for
+eviction first under a `volatile-*` `maxmemory-policy`, so a memory-constrained Redis reclaims old failure
+records before touching live queue jobs.
 
 ### Migrating from `blomstra/flarum-redis`
 
