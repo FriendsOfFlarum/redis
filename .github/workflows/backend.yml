@@ -6,7 +6,16 @@ jobs:
   run:
     uses: flarum/framework/.github/workflows/REUSABLE_backend.yml@2.x
     with:
-      enable_backend_testing: false
+      enable_backend_testing: true
       enable_phpstan: true
 
       backend_directory: .
+
+      # Run a Redis-compatible service for the integration tests, and exercise
+      # BOTH supported client libraries: 'phpredis' (native extension) and
+      # 'predis' (pure PHP). fof/redis auto-detects the client at runtime, and
+      # the two disagree on some command signatures (e.g. PUBSUB NUMSUB), so
+      # both must be covered.
+      enable_redis: true
+      redis_variant: valkey
+      redis_clients: '["phpredis", "predis"]'
