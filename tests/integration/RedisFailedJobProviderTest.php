@@ -14,7 +14,6 @@
 namespace FoF\Redis\Tests\integration;
 
 use Flarum\Testing\integration\TestCase;
-use FoF\Redis\Extend\Redis;
 use FoF\Redis\Queue\RedisFailedJobProvider;
 use Illuminate\Contracts\Redis\Factory;
 use Illuminate\Queue\Failed\FailedJobProviderInterface;
