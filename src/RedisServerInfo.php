@@ -97,8 +97,17 @@ class RedisServerInfo
             return $this->serverSection ?? [];
         }
 
+        $connection = $this->resolveConnectionName();
+
+        if ($connection === null) {
+            $this->error = 'No Redis connection is registered.';
+            $this->serverSection = [];
+
+            return $this->serverSection;
+        }
+
         try {
-            $info = $this->redis->connection($this->connection)->info('server');
+            $info = $this->redis->connection($connection)->info('server');
             // Predis nests the section under a 'Server' key; phpredis returns flat.
             $this->serverSection = $info['Server'] ?? $info;
         } catch (\Exception $e) {
@@ -107,5 +116,30 @@ class RedisServerInfo
         }
 
         return $this->serverSection;
+    }
+
+    /**
+     * Pick a Redis connection that is actually registered.
+     *
+     * The default connection ('fof.cache') is only registered by the Cache
+     * provider; an install that disables cache but keeps other services would
+     * have no 'fof.cache' connection, leaving this stuck in an error state.
+     * Prefer the configured connection, then fall back to any other service
+     * connection that has been registered on the manager.
+     */
+    private function resolveConnectionName(): ?string
+    {
+        $candidates = array_values(array_unique(array_merge(
+            [$this->connection],
+            ['fof.cache', 'fof.sessions', 'fof.settings', 'default']
+        )));
+
+        foreach ($candidates as $name) {
+            if ($this->redis->getConnectionConfig($name) !== null) {
+                return $name;
+            }
+        }
+
+        return null;
     }
 }

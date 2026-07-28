@@ -16,6 +16,7 @@ namespace FoF\Redis\Settings;
 use Flarum\Settings\SettingsRepositoryInterface;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 
 class RedisCacheSettingsRepository implements SettingsRepositoryInterface
 {
@@ -24,6 +25,15 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
     protected string $cacheKey = 'flarum:settings';
     protected int $ttl = 3600; // 1 hour
     protected bool $loading = false;
+
+    /**
+     * The companion key `flexible()` writes alongside the value to record when
+     * the cache was last filled. Reads use it to decide staleness, so any
+     * in-place patch of the value must refresh it too, or the just-written
+     * value is judged stale and a background refresh clobbers it from the DB.
+     * Mirrors Illuminate\Cache\Repository::FLEXIBLE_CREATED_KEY_PREFIX.
+     */
+    protected string $createdKey = 'illuminate:cache:flexible:created:flarum:settings';
 
     public function __construct(SettingsRepositoryInterface $inner, CacheRepository $cache)
     {
@@ -72,7 +82,7 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
 
         if (is_array($all)) {
             $all[$key] = $value;
-            $this->cache->put($this->cacheKey, $all, $this->ttl);
+            $this->writeCache($all);
         }
     }
 
@@ -87,7 +97,19 @@ class RedisCacheSettingsRepository implements SettingsRepositoryInterface
 
         if (is_array($all)) {
             unset($all[$key]);
-            $this->cache->put($this->cacheKey, $all, $this->ttl);
+            $this->writeCache($all);
         }
+    }
+
+    /**
+     * Write the patched settings array back to the cache, keeping the
+     * `flexible()` created-timestamp in sync so the just-written value is
+     * treated as fresh rather than immediately stale (which would trigger a
+     * background DB refresh that could clobber it from a lagging replica).
+     */
+    protected function writeCache(array $all): void
+    {
+        $this->cache->put($this->cacheKey, $all, $this->ttl);
+        $this->cache->put($this->createdKey, Carbon::now()->getTimestamp(), $this->ttl);
     }
 }
