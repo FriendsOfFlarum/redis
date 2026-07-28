@@ -16,26 +16,38 @@ namespace FoF\Redis\Console;
 use Flarum\Console\AbstractCommand;
 use Flarum\Foundation\Paths;
 use Flarum\Locale\LocaleManager;
+use FoF\Redis\Configuration;
 use FoF\Redis\Overrides\RedisManager;
 use Illuminate\Cache\Repository;
+use Illuminate\Support\Arr;
 use Predis\Connection\NodeConnectionInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\Input\InputOption;
 
 class CacheSubscribeCommand extends AbstractCommand
 {
+    /**
+     * The well-known default channel, used only when neither --channel nor a
+     * configured pubsub.channel is present. Kept in sync with the publisher's
+     * default in the Cache provider.
+     */
+    public const DEFAULT_CHANNEL = 'flarum:cache:invalidate';
+
     protected Paths $paths;
     protected LocaleManager $locales;
     protected LoggerInterface $logger;
+    protected Configuration $configuration;
 
     public function __construct(
         Paths $paths,
         LocaleManager $locales,
-        LoggerInterface $logger
+        LoggerInterface $logger,
+        Configuration $configuration
     ) {
         $this->paths = $paths;
         $this->locales = $locales;
         $this->logger = $logger;
+        $this->configuration = $configuration;
         parent::__construct();
     }
 
@@ -46,7 +58,30 @@ class CacheSubscribeCommand extends AbstractCommand
             ->setDescription('Subscribe to Redis for distributed cache invalidation')
             ->addOption('once', null, InputOption::VALUE_NONE, 'Process one message and exit (for testing)')
             ->addOption('delay', null, InputOption::VALUE_REQUIRED, 'Delay in seconds before subscribing', 0)
-            ->addOption('channel', null, InputOption::VALUE_REQUIRED, 'Redis pub/sub channel', 'flarum:cache:invalidate');
+            // Default is null so an omitted option falls back to the CONFIGURED
+            // channel (see resolveChannel), not a hardcoded literal that could
+            // diverge from what the publisher uses.
+            ->addOption('channel', null, InputOption::VALUE_REQUIRED, 'Redis pub/sub channel', null);
+    }
+
+    /**
+     * Resolve the channel to subscribe on.
+     *
+     * Precedence: an explicit --channel wins; otherwise the configured
+     * pubsub.channel (the same value the publisher uses); otherwise the
+     * well-known default. This ensures a subscriber launched without --channel
+     * (e.g. from cron/systemd) listens on the same channel the publisher
+     * publishes to, rather than a hardcoded literal that ignores config.
+     */
+    public function resolveChannel(?string $option): string
+    {
+        if (!empty($option)) {
+            return $option;
+        }
+
+        $configured = Arr::get($this->configuration->toArray(), 'pubsub.channel');
+
+        return !empty($configured) ? $configured : self::DEFAULT_CHANNEL;
     }
 
     protected function fire(): int
@@ -152,7 +187,7 @@ class CacheSubscribeCommand extends AbstractCommand
      */
     private function subscribePredis(\Predis\Client $client, string $podId): void
     {
-        $channel = (string) $this->input->getOption('channel');
+        $channel = $this->resolveChannel($this->input->getOption('channel'));
 
         $this->info('[Cache Subscriber] ✓ Connected (Predis)');
         $this->logger->info('[Cache Subscriber] Connected', ['client' => 'Predis', 'pod' => $podId]);
@@ -197,7 +232,7 @@ class CacheSubscribeCommand extends AbstractCommand
      */
     private function subscribePhpRedis(\Redis $client, string $podId): void
     {
-        $channel = (string) $this->input->getOption('channel');
+        $channel = $this->resolveChannel($this->input->getOption('channel'));
 
         $this->info('[Cache Subscriber] ✓ Connected (phpredis)');
         $this->logger->info('[Cache Subscriber] Connected', ['client' => 'phpredis', 'pod' => $podId]);
