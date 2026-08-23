@@ -14,6 +14,7 @@
 namespace FoF\Redis\Queue;
 
 use Flarum\Queue\QueueStatsProvider;
+use Flarum\Queue\RoutingQueue;
 use Illuminate\Contracts\Queue\Queue;
 use Illuminate\Queue\Failed\FailedJobProviderInterface;
 use Illuminate\Queue\RedisQueue;
@@ -28,18 +29,53 @@ use Illuminate\Queue\RedisQueue;
  *
  * Counts come from the Redis queue's own public size methods (which speak to
  * Redis via the configured client, so they work under both phpredis and
- * predis). Failed jobs are read through the bound failer, exactly as core does
- * — fof/redis does not register its own failer, so failures still live in the
- * `queue_failed_jobs` table.
+ * predis). Since Flarum 2.0.0-rc.6, core decorates `flarum.queue.connection`
+ * with a {@see RoutingQueue} wrapper, so the injected queue is unwrapped to the
+ * concrete driver before those methods are reached — the same way core's own
+ * QueueServiceProvider and ApplicationInfoProvider see through it.
+ *
+ * Failed jobs are read through the bound failer, exactly as core does — under
+ * fof/redis that is our own RedisFailedJobProvider, so failures live in Redis
+ * rather than the `queue_failed_jobs` table.
  */
 class RedisQueueStatsProvider implements QueueStatsProvider
 {
+    /**
+     * The concrete queue driver, with any core wrapper unwrapped.
+     */
+    protected Queue $driver;
+
     public function __construct(
         protected Queue $queue,
         protected FailedJobProviderInterface $failer,
         /** @var list<string> */
         protected array $queues
     ) {
+        $this->driver = $this->unwrap($queue);
+    }
+
+    /**
+     * Resolve the concrete driver behind core's queue decorator.
+     *
+     * Core wraps whatever is bound to `flarum.queue.connection` — including our
+     * Redis queue — in a RoutingQueue so pushes can be routed to a named queue.
+     * The wrapper is not a RedisQueue, so the size lookups below have to run
+     * against the driver it wraps or every count reads as zero. `class_exists`
+     * keeps this working on cores from before the wrapper existed.
+     */
+    protected function unwrap(Queue $queue): Queue
+    {
+        while (class_exists(RoutingQueue::class) && $queue instanceof RoutingQueue) {
+            $driver = $queue->getDriver();
+
+            if ($driver === $queue) {
+                break;
+            }
+
+            $queue = $driver;
+        }
+
+        return $queue;
     }
 
     public function totals(): array
@@ -84,11 +120,11 @@ class RedisQueueStatsProvider implements QueueStatsProvider
      */
     protected function pendingSize(string $queue): int
     {
-        if (!$this->queue instanceof RedisQueue) {
+        if (!$this->driver instanceof RedisQueue) {
             return 0;
         }
 
-        return (int) $this->queue->pendingSize($queue) + (int) $this->queue->delayedSize($queue);
+        return (int) $this->driver->pendingSize($queue) + (int) $this->driver->delayedSize($queue);
     }
 
     /**
@@ -96,8 +132,8 @@ class RedisQueueStatsProvider implements QueueStatsProvider
      */
     protected function reservedSize(string $queue): int
     {
-        return $this->queue instanceof RedisQueue
-            ? (int) $this->queue->reservedSize($queue)
+        return $this->driver instanceof RedisQueue
+            ? (int) $this->driver->reservedSize($queue)
             : 0;
     }
 }
