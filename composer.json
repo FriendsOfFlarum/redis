@@ -29,7 +29,7 @@
         }
     },
     "require": {
-        "flarum/core": "2.x-dev",
+        "flarum/core": "^2.0.0-rc.6",
         "illuminate/redis": "^13.0",
         "predis/predis": "^v2.3.0"
     },
