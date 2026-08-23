@@ -14,6 +14,7 @@
 namespace FoF\Redis\Tests\integration;
 
 use Flarum\Queue\QueueStatsProvider;
+use Flarum\Queue\RoutingQueue;
 use Flarum\Testing\integration\TestCase;
 use FoF\Redis\Queue\RedisQueueStatsProvider;
 use PHPUnit\Framework\Attributes\Test;
@@ -80,6 +81,23 @@ class RedisQueueStatsProviderTest extends TestCase
         $totals = $this->stats()->totals();
         $this->assertSame(2, $totals['pending']);
         $this->assertSame(2, $this->stats()->queues()['default']['pending']);
+    }
+
+    #[Test]
+    public function pending_is_counted_through_cores_queue_decorator()
+    {
+        // Since 2.0.0-rc.6 core decorates `flarum.queue.connection` with a
+        // RoutingQueue so pushes can be routed onto a named queue. That wrapper
+        // is not an Illuminate RedisQueue, so a provider that type-checks the
+        // injected connection directly reads every count as zero while jobs sit
+        // in Redis — an idle-looking dashboard on a backed-up queue. Assert the
+        // wrapper is really in play, then that counts still come through it.
+        $queue = $this->app()->getContainer()->make('flarum.queue.connection');
+        $this->assertInstanceOf(RoutingQueue::class, $queue, 'core is expected to wrap the queue connection');
+
+        $queue->pushRaw(json_encode(['uuid' => 'w1', 'displayName' => 'X']), 'default');
+
+        $this->assertSame(1, $this->stats()->totals()['pending']);
     }
 
     #[Test]
