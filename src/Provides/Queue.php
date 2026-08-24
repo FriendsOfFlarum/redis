@@ -56,6 +56,13 @@ class Queue extends Provider
             );
             $queue->setContainer($container);
 
+            // Name the connection. Core names its own driver but not one we
+            // replace here, and a null name flows into the pause/resume
+            // bookkeeping and the WorkerIdle event — both of which expect a
+            // string — crashing `queue:pause`. Use core's default connection
+            // name so pause keys and the dashboard read consistently.
+            $queue->setConnectionName('flarum');
+
             return $queue;
         });
 

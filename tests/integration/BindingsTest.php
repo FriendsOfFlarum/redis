@@ -62,6 +62,28 @@ class BindingsTest extends TestCase
         }
     }
 
+    /**
+     * The queue connection fof/redis binds must carry a name. Core names its
+     * own driver but not one an extension replaces, and a null name flows into
+     * the pause/resume bookkeeping and the WorkerIdle event — both of which
+     * expect a string — crashing `queue:pause`. Naming it here (as Horizon
+     * does) keeps the connection valid regardless of the core version.
+     */
+    #[Test]
+    public function the_queue_connection_is_named()
+    {
+        $this->flushTestDatabases();
+        $this->registerRedis();
+
+        $queue = $this->app()->getContainer()->make('flarum.queue.connection');
+
+        // Core may wrap the driver (RoutingQueue) and delegate the name down to
+        // it; assert on the driver fof/redis actually bound.
+        $driver = method_exists($queue, 'getDriver') ? $queue->getDriver() : $queue;
+
+        $this->assertSame('flarum', $driver->getConnectionName());
+    }
+
     #[Test]
     public function disable_prevents_a_service_binding_from_being_overridden()
     {
