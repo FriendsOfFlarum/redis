@@ -13,8 +13,11 @@
 
 namespace FoF\Redis\Provides;
 
+use Flarum\Extension\Event\Disabled;
+use Flarum\Extension\Event\Enabled;
 use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Foundation\Paths;
+use Flarum\Settings\Event\Saved;
 use FoF\Redis\Configuration;
 use FoF\Redis\Event\CacheConnectionReady;
 use FoF\Redis\Overrides\RedisManager;
@@ -75,27 +78,42 @@ class Cache extends Provider
 
         $container->alias('cache.redisstore', Store::class);
 
-        $events->listen(ClearingCache::class, function (ClearingCache $_) use ($container, $pubSubConfig) {
-            // This clears the cache for the text formatter which is stored in file storage
-            // this is hardcoded in core because it is autoloaded using spl.
-            (new Repository(resolve('cache.filestore')))->flush();
+        $publishInvalidation = function () use ($container, $pubSubConfig) {
+            if (!$pubSubConfig['enabled']) {
+                return;
+            }
 
             try {
                 /** @var RedisManager $redis */
                 $redis = $container->make(Factory::class);
-                if ($pubSubConfig['enabled']) {
-                    $message = json_encode([
-                        'timestamp' => time(),
-                        'source'    => gethostname(),
-                        'version'   => time(),
-                    ]);
 
-                    $redis->connection($this->connection)->publish($pubSubConfig['channel'], $message);
-                }
+                $message = json_encode([
+                    'timestamp' => time(),
+                    'source'    => gethostname(),
+                    'version'   => time(),
+                ]);
+
+                $redis->connection($this->connection)->publish($pubSubConfig['channel'], $message);
             } catch (\Exception $e) {
                 // Fail gracefully if Redis is unavailable
             }
+        };
+
+        $events->listen(ClearingCache::class, function (ClearingCache $_) use ($publishInvalidation) {
+            // This clears the cache for the text formatter which is stored in file storage
+            // this is hardcoded in core because it is autoloaded using spl.
+            (new Repository(resolve('cache.filestore')))->flush();
+
+            $publishInvalidation();
         });
+
+        // Core reacts to extension toggles and settings saves with pod-local
+        // invalidation only (compiled assets, locale catalogues) and never
+        // dispatches ClearingCache for them. Publish the invalidation message
+        // ourselves so subscribers on every other pod clear their local caches
+        // too — otherwise they serve stale translations until the next
+        // explicit cache:clear.
+        $events->listen([Enabled::class, Disabled::class, Saved::class], $publishInvalidation);
     }
 
     private function normalizePubSubConfig(array $config): array

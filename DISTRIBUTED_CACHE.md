@@ -8,25 +8,27 @@ When running multiple Flarum instances (pods/containers) with Redis cache, cache
 
 ### The Problem
 
-When you clear cache via admin panel or `php flarum cache:clear`:
+When cache-affecting admin actions run — clearing cache via admin panel or `php flarum cache:clear`, enabling/disabling an extension, or saving settings:
 1. **Pod A** clears its Redis cache (shared) ✅
 2. **Pod A** clears its file caches (local) ✅
 3. **Pods B, C, D** still have stale file caches ❌
 
-This causes missing translations, stale assets, and other cache-related issues.
+This causes missing translations (raw `core.*` keys), stale assets, and other cache-related issues. Extension toggles and settings saves are especially insidious: Flarum core reacts to them with pod-local invalidation only and never dispatches `ClearingCache`, so without propagation the other pods stay stale until the next explicit cache clear.
 
 ### The Solution
 
 **Automatic propagation using Redis Pub/Sub:**
 
-1. When cache is cleared on Pod A:
-   - Clears local Redis + file caches
-   - Publishes a cache invalidation message to Redis channel
+1. When an invalidating action happens on Pod A:
+   - `cache:clear` (CLI or admin Clear Cache button)
+   - an extension is enabled or disabled
+   - settings are saved in the admin panel
+   Pod A performs its local invalidation and publishes a cache invalidation message to the Redis channel
 
 2. Pod B subscriber receives the message:
    - Invalidates local file caches immediately
 
-3. All pods stay synchronized in real time
+3. All pods stay synchronized in near real time (message delivery is asynchronous — a request racing the delivery window can still rebuild from stale state for a moment)
 
 ### What Gets Invalidated
 
