@@ -26,7 +26,7 @@ use Psr\Log\LoggerInterface;
  * drops the shared settings cache, and flushes the compiled frontend assets so
  * the next rebuild happens from fresh state. (Flushing is safe here on 1.x:
  * FileVersioner reads the revision manifest fresh from disk on every call, so
- * a long-running subscriber cannot rewrite it from a stale snapshot.)
+ * a long-running subscriber cannot rewrite it from a stale snapshot.).
  *
  * The applied epoch is recorded per pod AND per SAPI: the CLI subscriber and
  * php-fpm each keep their own record, because some work is only effective in
