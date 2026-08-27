@@ -13,10 +13,15 @@
 
 namespace FoF\Redis\Provides;
 
+use Flarum\Extension\Event\Disabled;
+use Flarum\Extension\Event\Enabled;
 use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Foundation\Paths;
+use Flarum\Settings\Event\Saved;
+use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Configuration;
 use FoF\Redis\Event\CacheConnectionReady;
+use FoF\Redis\Middleware\DistributedCacheInvalidation;
 use FoF\Redis\Overrides\RedisManager;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository;
@@ -34,7 +39,10 @@ class Cache extends Provider
     public function __invoke(Configuration $configuration, Container $container): void
     {
         $rawConfig = $configuration->toArray();
-        $pubSubConfig = $this->normalizePubSubConfig(Arr::get($rawConfig, 'pubsub', []));
+        $pubSubConfig = $this->normalizePubSubConfig(
+            Arr::get($rawConfig, 'pubsub', []),
+            Arr::get($rawConfig, 'prefix', '')
+        );
 
         $connectionConfig = $rawConfig;
         Arr::forget($connectionConfig, ['pubsub']);
@@ -75,30 +83,90 @@ class Cache extends Provider
 
         $container->alias('cache.redisstore', Store::class);
 
-        $events->listen(ClearingCache::class, function (ClearingCache $_) use ($container, $pubSubConfig) {
-            // This clears the cache for the text formatter which is stored in file storage
-            // this is hardcoded in core because it is autoloaded using spl.
-            (new Repository(resolve('cache.filestore')))->flush();
+        $publishInvalidation = function () use ($container, $pubSubConfig) {
+            if (!$pubSubConfig['enabled']) {
+                return;
+            }
 
             try {
                 /** @var RedisManager $redis */
                 $redis = $container->make(Factory::class);
-                if ($pubSubConfig['enabled']) {
-                    $message = json_encode([
-                        'timestamp' => time(),
-                        'source'    => gethostname(),
-                        'version'   => time(),
-                    ]);
 
-                    $redis->connection($this->connection)->publish($pubSubConfig['channel'], $message);
-                }
+                $version = (int) round(microtime(true) * 1000);
+
+                // Durable epoch for the middleware backstop: pods that miss the
+                // pub/sub message (subscriber down) or race its delivery catch
+                // up synchronously on their next request.
+                $redis->connection($this->connection)
+                    ->set($pubSubConfig['version_key'], (string) $version);
+
+                $message = json_encode([
+                    'timestamp' => time(),
+                    'source'    => gethostname(),
+                    'version'   => $version,
+                ]);
+
+                $redis->connection($this->connection)->publish($pubSubConfig['channel'], $message);
             } catch (\Exception $e) {
                 // Fail gracefully if Redis is unavailable
             }
+        };
+
+        $events->listen(ClearingCache::class, function (ClearingCache $_) use ($publishInvalidation) {
+            // This clears the cache for the text formatter which is stored in file storage
+            // this is hardcoded in core because it is autoloaded using spl.
+            (new Repository(resolve('cache.filestore')))->flush();
+
+            $publishInvalidation();
         });
+
+        // Core reacts to extension toggles and settings saves with pod-local
+        // invalidation only (compiled assets, locale catalogues) and never
+        // dispatches ClearingCache for them. Publish the invalidation message
+        // ourselves so subscribers on every other pod clear their local caches
+        // too — otherwise they serve stale translations until the next
+        // explicit cache:clear.
+        $events->listen([Enabled::class, Disabled::class, Saved::class], $publishInvalidation);
+
+        if ($pubSubConfig['enabled']) {
+            $container->bind(DistributedCacheInvalidation::class, function ($container) use ($pubSubConfig) {
+                return new DistributedCacheInvalidation(
+                    $container->make(Factory::class),
+                    $container->make(LocalCacheInvalidator::class),
+                    $this->connection,
+                    $pubSubConfig['version_key'],
+                    $pubSubConfig['check_interval']
+                );
+            });
+
+            // Insert right after the error handler — BEFORE AddAssetsRevisionHeader
+            // (which rebuilds dirty assets and consumes the dirty flag) and before
+            // anything that reads settings (session, locale): a stale pod must
+            // clear its local state before any of that runs.
+            foreach (['forum', 'admin', 'api'] as $frontend) {
+                $container->extend("flarum.{$frontend}.middleware", function (array $middleware) use ($frontend) {
+                    $position = array_search("flarum.{$frontend}.error_handler", $middleware, true);
+                    $position = $position === false ? 0 : $position + 1;
+
+                    array_splice($middleware, $position, 0, [DistributedCacheInvalidation::class]);
+
+                    return $middleware;
+                });
+            }
+
+            // Core's internal Api\Client replays the API middleware stack for
+            // sub-requests made while rendering a page. Re-running the epoch
+            // check there would add Redis GETs per inner call and could run a
+            // full invalidation mid-render — the outer request already checked.
+            $container->extend('flarum.api_client.exclude_middleware', function (array $exclude) {
+                $exclude[] = DistributedCacheInvalidation::class;
+
+                return $exclude;
+            });
+        }
     }
 
-    private function normalizePubSubConfig(array $config): array
+    private function normalizePubSubConfig(array $config, string $prefix = ''): array
     {
         $enabled = (bool) ($config['enabled'] ?? false);
         $autostart = array_key_exists('autostart', $config) ? (bool) $config['autostart'] : $enabled;
@@ -113,6 +181,13 @@ class Cache extends Provider
             'channel'        => $config['channel'] ?? 'flarum:cache:invalidate',
             'delay'          => (int) ($config['delay'] ?? 0),
             'spawn_lock_ttl' => (int) ($config['spawn_lock_ttl'] ?? 300),
+            // Seconds between epoch checks in the request middleware (throttled
+            // per pod via APCu when available). 0 (default) checks on every
+            // request — one Redis GET, sub-millisecond.
+            'check_interval' => max(0, (int) ($config['check_interval'] ?? 0)),
+            // The epoch key honors the configured prefix, so two forums sharing
+            // a Redis database don't invalidate each other.
+            'version_key'    => $prefix.DistributedCacheInvalidation::VERSION_KEY,
         ];
     }
 
