@@ -36,15 +36,37 @@ class DistributedCacheInvalidation implements MiddlewareInterface
 
     /**
      * Timestamp of the last Redis check (per PHP-FPM worker).
+     *
+     * @var int
      */
-    protected static int $lastCheck = 0;
+    protected static $lastCheck = 0;
 
-    public function __construct(
-        protected Factory $redis,
-        protected LocalCacheInvalidator $invalidator,
-        protected string $connection,
-        protected int $checkInterval = 0
-    ) {
+    /**
+     * @var Factory
+     */
+    protected $redis;
+
+    /**
+     * @var LocalCacheInvalidator
+     */
+    protected $invalidator;
+
+    /**
+     * @var string
+     */
+    protected $connection;
+
+    /**
+     * @var int
+     */
+    protected $checkInterval;
+
+    public function __construct(Factory $redis, LocalCacheInvalidator $invalidator, string $connection, int $checkInterval = 0)
+    {
+        $this->redis = $redis;
+        $this->invalidator = $invalidator;
+        $this->connection = $connection;
+        $this->checkInterval = $checkInterval;
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface

@@ -27,11 +27,26 @@ use Illuminate\Contracts\Container\Container;
  */
 class LocalCacheInvalidator
 {
-    public function __construct(
-        protected Container $container,
-        protected Paths $paths,
-        protected LocaleManager $locales
-    ) {
+    /**
+     * @var Container
+     */
+    protected $container;
+
+    /**
+     * @var Paths
+     */
+    protected $paths;
+
+    /**
+     * @var LocaleManager
+     */
+    protected $locales;
+
+    public function __construct(Container $container, Paths $paths, LocaleManager $locales)
+    {
+        $this->container = $container;
+        $this->paths = $paths;
+        $this->locales = $locales;
     }
 
     public function invalidate(): void
