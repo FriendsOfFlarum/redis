@@ -39,7 +39,10 @@ class Cache extends Provider
     public function __invoke(Configuration $configuration, Container $container)
     {
         $rawConfig = $configuration->toArray();
-        $pubSubConfig = $this->normalizePubSubConfig(Arr::get($rawConfig, 'pubsub', []));
+        $pubSubConfig = $this->normalizePubSubConfig(
+            Arr::get($rawConfig, 'pubsub', []),
+            Arr::get($rawConfig, 'prefix', '')
+        );
 
         $connectionConfig = $rawConfig;
         Arr::forget($connectionConfig, ['pubsub']);
@@ -95,7 +98,7 @@ class Cache extends Provider
                 // pub/sub message (subscriber down) or race its delivery catch
                 // up synchronously on their next request.
                 $redis->connection($this->connection)
-                    ->set(DistributedCacheInvalidation::VERSION_KEY, (string) $version);
+                    ->set($pubSubConfig['version_key'], (string) $version);
 
                 $message = json_encode([
                     'timestamp' => time(),
@@ -131,21 +134,38 @@ class Cache extends Provider
                     $container->make(Factory::class),
                     $container->make(LocalCacheInvalidator::class),
                     $this->connection,
+                    $pubSubConfig['version_key'],
                     $pubSubConfig['check_interval']
                 );
             });
 
+            // Insert right after the error handler — before the session/locale
+            // middleware that read settings: a stale pod must clear its local
+            // state before any of that runs.
             foreach (['forum', 'admin', 'api'] as $frontend) {
-                $container->extend("flarum.{$frontend}.middleware", function ($middleware) {
-                    $middleware[] = DistributedCacheInvalidation::class;
+                $container->extend("flarum.{$frontend}.middleware", function (array $middleware) use ($frontend) {
+                    $position = array_search("flarum.{$frontend}.error_handler", $middleware, true);
+                    $position = $position === false ? 0 : $position + 1;
+
+                    array_splice($middleware, $position, 0, [DistributedCacheInvalidation::class]);
 
                     return $middleware;
                 });
             }
+
+            // Core's internal Api\Client replays the API middleware stack for
+            // sub-requests made while rendering a page. Re-running the epoch
+            // check there would add Redis GETs per inner call and could run a
+            // full invalidation mid-render — the outer request already checked.
+            $container->extend('flarum.api_client.exclude_middleware', function (array $exclude) {
+                $exclude[] = DistributedCacheInvalidation::class;
+
+                return $exclude;
+            });
         }
     }
 
-    private function normalizePubSubConfig(array $config): array
+    private function normalizePubSubConfig(array $config, string $prefix = ''): array
     {
         $enabled = (bool) ($config['enabled'] ?? false);
         $autostart = array_key_exists('autostart', $config) ? (bool) $config['autostart'] : $enabled;
@@ -160,9 +180,13 @@ class Cache extends Provider
             'channel'        => $config['channel'] ?? 'flarum:cache:invalidate',
             'delay'          => (int) ($config['delay'] ?? 0),
             'spawn_lock_ttl' => (int) ($config['spawn_lock_ttl'] ?? 300),
-            // Seconds between per-worker epoch checks in the request middleware.
-            // 0 (default) checks on every request — one Redis GET, sub-millisecond.
+            // Seconds between epoch checks in the request middleware (throttled
+            // per pod via APCu when available). 0 (default) checks on every
+            // request — one Redis GET, sub-millisecond.
             'check_interval' => max(0, (int) ($config['check_interval'] ?? 0)),
+            // The epoch key honors the configured prefix, so two forums sharing
+            // a Redis database don't invalidate each other.
+            'version_key'    => $prefix.DistributedCacheInvalidation::VERSION_KEY,
         ];
     }
 

@@ -55,7 +55,9 @@ This causes missing translations (raw `core.*` keys), stale assets, and other ca
 
 ### Performance
 
-Pub/Sub has near-zero per-request overhead and only incurs work on cache clears.
+Pub/Sub itself has near-zero per-request overhead. The epoch backstop adds one Redis `GET` per request by default (sub-millisecond; this extension already performs a Redis GET per request for the settings cache). Set `check_interval` to throttle the check per pod — the throttle uses APCu when available; without APCu the check runs on every request regardless.
+
+The epoch record is written to `<flarum root>/cache-epoch-<hostname>-<sapi>` — the base path must be writable by the web user. If it is not, the backstop disables itself and logs a warning (it never loops). The hostname suffix keeps records per pod even when the install root is a shared volume; the SAPI suffix lets php-fpm perform its own apply (a CLI subscriber cannot reset php-fpm's OPcache).
 
 ## Configuration
 
@@ -143,9 +145,9 @@ php flarum tinker
 
 Pub/Sub provides near real-time cache invalidation across all containers. It requires a long-running subscriber process, which can be auto-started via configuration.
 
-### Why Static Variables?
+### Why both push and pull?
 
-Pub/Sub avoids per-request checks entirely and only does work when a cache clear happens.
+Pub/sub is the fast path (millisecond propagation) but is asynchronous and has no replay: a message published while a pod's subscriber is down is lost forever, and a request racing the delivery can rebuild shared assets from stale local state. The per-request epoch check is the durable correctness guarantee.
 
 ### Race Conditions?
 
@@ -157,7 +159,8 @@ Pub/sub alone is not safe here: delivery is asynchronous, so a request landing o
 1. The epoch is written to Redis before the message is published
 2. Each pod checks the epoch synchronously before serving a request and clears its local caches first when behind — a rebuild can no longer start from stale local state
 3. Applying an epoch also re-flushes the compiled assets, so anything poisoned inside the tiny remaining in-flight window is erased as pods catch up
-4. Each pod applies independently and idempotently (no locks needed); the applied epoch is recorded per pod so nothing is cleared twice
+4. Applying an epoch also drops the shared settings cache, so a pre-change snapshot re-stored by a racing refill lives milliseconds, not the full TTL
+5. Each pod applies independently and idempotently; concurrent workers on one pod are serialized by an atomic claim, and the applied epoch is recorded per pod (and per SAPI) so nothing is cleared twice
 
 **Residual window:** a request already past the epoch check when the invalidation lands can theoretically still write a stale asset after the last pod catches up. This is a tens-of-milliseconds sliver, and any later invalidation event heals it.
 

@@ -94,12 +94,26 @@ class CachePubSubConfigTest extends TestCase
         $this->assertSame(0, $config['check_interval']);
     }
 
-    private function invokeNormalize(Cache $cache, array $config): array
+    /**
+     * @test
+     */
+    public function normalize_pubsub_config_version_key_honors_the_prefix()
+    {
+        $cache = new Cache();
+
+        $config = $this->invokeNormalize($cache, []);
+        $this->assertSame('flarum:cache:version', $config['version_key']);
+
+        $config = $this->invokeNormalize($cache, [], 'forum_a:');
+        $this->assertSame('forum_a:flarum:cache:version', $config['version_key']);
+    }
+
+    private function invokeNormalize(Cache $cache, array $config, string $prefix = ''): array
     {
         $reflection = new \ReflectionClass($cache);
         $method = $reflection->getMethod('normalizePubSubConfig');
         $method->setAccessible(true);
 
-        return $method->invoke($cache, $config);
+        return $method->invoke($cache, $config, $prefix);
     }
 }

@@ -15,7 +15,6 @@ namespace FoF\Redis\Console;
 
 use Flarum\Console\AbstractCommand;
 use Flarum\Foundation\Paths;
-use Flarum\Locale\LocaleManager;
 use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Overrides\RedisManager;
 use Psr\Log\LoggerInterface;
@@ -24,16 +23,13 @@ use Symfony\Component\Console\Input\InputOption;
 class CacheSubscribeCommand extends AbstractCommand
 {
     protected Paths $paths;
-    protected LocaleManager $locales;
     protected LoggerInterface $logger;
 
     public function __construct(
         Paths $paths,
-        LocaleManager $locales,
         LoggerInterface $logger
     ) {
         $this->paths = $paths;
-        $this->locales = $locales;
         $this->logger = $logger;
         parent::__construct();
     }
@@ -287,7 +283,7 @@ class CacheSubscribeCommand extends AbstractCommand
             if ($version > 0) {
                 $invalidator->recordApplied($version);
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Fail gracefully - log but don't break the subscriber
             $this->error("[Cache Subscriber] Failed to invalidate caches: {$e->getMessage()}");
             $this->logger->error('[Cache Subscriber] Failed to invalidate local caches', [

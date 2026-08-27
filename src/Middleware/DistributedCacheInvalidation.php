@@ -29,17 +29,14 @@ use Psr\Http\Server\RequestHandlerInterface;
  * message can rebuild shared artifacts from stale local state, and a message
  * published while this pod's subscriber was down is lost forever. The epoch is
  * durable state, checked before the request is handled, so both cases self-heal.
+ *
+ * This middleware is inserted right after each stack's error handler, before
+ * the session/locale middleware that read settings: a stale pod must clear its
+ * local state before any of that runs.
  */
 class DistributedCacheInvalidation implements MiddlewareInterface
 {
-    public const VERSION_KEY = 'flarum:cache:version';
-
-    /**
-     * Timestamp of the last Redis check (per PHP-FPM worker).
-     *
-     * @var int
-     */
-    protected static $lastCheck = 0;
+    const VERSION_KEY = 'flarum:cache:version';
 
     /**
      * @var Factory
@@ -57,36 +54,61 @@ class DistributedCacheInvalidation implements MiddlewareInterface
     protected $connection;
 
     /**
+     * @var string
+     */
+    protected $versionKey;
+
+    /**
      * @var int
      */
     protected $checkInterval;
 
-    public function __construct(Factory $redis, LocalCacheInvalidator $invalidator, string $connection, int $checkInterval = 0)
-    {
+    public function __construct(
+        Factory $redis,
+        LocalCacheInvalidator $invalidator,
+        string $connection,
+        string $versionKey = self::VERSION_KEY,
+        int $checkInterval = 0
+    ) {
         $this->redis = $redis;
         $this->invalidator = $invalidator;
         $this->connection = $connection;
+        $this->versionKey = $versionKey;
         $this->checkInterval = $checkInterval;
     }
 
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        $now = time();
-
-        if ($this->checkInterval === 0 || $now - self::$lastCheck >= $this->checkInterval) {
-            self::$lastCheck = $now;
-
+        if ($this->shouldCheck()) {
             $this->applyPendingInvalidation();
         }
 
         return $handler->handle($request);
     }
 
+    /**
+     * Throttle the Redis check to at most one per check_interval seconds per
+     * pod. PHP statics don't survive between php-fpm requests, so the throttle
+     * is backed by APCu (shared across a pod's workers); without APCu — or
+     * with the default interval of 0 — the epoch is checked on every request
+     * (one Redis GET, sub-millisecond).
+     */
+    protected function shouldCheck(): bool
+    {
+        if ($this->checkInterval <= 0 || !function_exists('apcu_add') || !apcu_enabled()) {
+            return true;
+        }
+
+        // apcu_add is atomic: it returns true only for the one caller that
+        // created the entry; everyone else skips until the TTL expires.
+        return apcu_add('fof.redis.epoch_checked', 1, $this->checkInterval);
+    }
+
     protected function applyPendingInvalidation(): void
     {
         try {
-            $globalVersion = (int) $this->redis->connection($this->connection)->get(self::VERSION_KEY);
-        } catch (\Exception $e) {
+            $globalVersion = (int) $this->redis->connection($this->connection)->get($this->versionKey);
+        } catch (\Throwable $e) {
             // Redis unavailable — fail open, serve the request.
             return;
         }
@@ -105,14 +127,26 @@ class DistributedCacheInvalidation implements MiddlewareInterface
             return;
         }
 
-        if ($globalVersion > $appliedVersion) {
-            try {
-                $this->invalidator->invalidate();
-                $this->invalidator->recordApplied($globalVersion);
-            } catch (\Exception $e) {
-                // Fail gracefully — leave the record unwritten so the next
-                // request retries the invalidation.
-            }
+        if ($globalVersion <= $appliedVersion) {
+            return;
+        }
+
+        // Claim the apply so concurrent workers crossing the same request
+        // boundary don't all run the full invalidation. Losing the claim is
+        // fine — the winner does the work, and an unwritable base path fails
+        // open (logged by the invalidator) instead of looping.
+        if (!$this->invalidator->claimEpoch($globalVersion)) {
+            return;
+        }
+
+        try {
+            $this->invalidator->invalidate();
+            $this->invalidator->recordApplied($globalVersion);
+        } catch (\Throwable $e) {
+            // Fail gracefully — the record stays unwritten, so a later
+            // request retries the invalidation.
+        } finally {
+            $this->invalidator->releaseClaim();
         }
     }
 }

@@ -52,6 +52,19 @@ class PubSubCacheInvalidationTest extends TestCase
         );
     }
 
+    protected function tearDown(): void
+    {
+        // Remove per-pod epoch records and claims so no test inherits state.
+        try {
+            $base = $this->app()->getContainer()->make(Paths::class)->base;
+            @array_map('unlink', glob($base.'/cache-epoch-*') ?: []);
+        } catch (\Exception $e) {
+            // App may not have booted in this test.
+        }
+
+        parent::tearDown();
+    }
+
     /**
      * @test
      */
@@ -155,6 +168,70 @@ class PubSubCacheInvalidationTest extends TestCase
     /**
      * @test
      */
+    public function middleware_is_registered_in_all_stacks_and_excluded_from_the_internal_api_client()
+    {
+        $this->requiresRedis();
+
+        $container = $this->app()->getContainer();
+
+        foreach (['forum', 'admin', 'api'] as $frontend) {
+            $stack = $container->make("flarum.{$frontend}.middleware");
+
+            $position = array_search(DistributedCacheInvalidation::class, $stack, true);
+            $errorHandler = array_search("flarum.{$frontend}.error_handler", $stack, true);
+
+            $this->assertIsInt($position, "Middleware should be registered in the {$frontend} stack");
+            $this->assertSame(
+                $errorHandler + 1,
+                $position,
+                "Middleware should run right after the {$frontend} error handler, before session and locale"
+            );
+        }
+
+        $this->assertContains(
+            DistributedCacheInvalidation::class,
+            $container->make('flarum.api_client.exclude_middleware'),
+            'Internal API sub-requests must not re-run the epoch check'
+        );
+    }
+
+    /**
+     * @test
+     */
+    public function middleware_does_nothing_when_epoch_is_already_applied()
+    {
+        $this->requiresRedis();
+
+        $container = $this->app()->getContainer();
+
+        /** @var Paths $paths */
+        $paths = $container->make(Paths::class);
+        @mkdir($paths->storage.'/locale', 0777, true);
+        $sentinel = $paths->storage.'/locale/sentinel.tmp';
+        file_put_contents($sentinel, 'fresh catalogue');
+
+        $version = (int) round(microtime(true) * 1000);
+
+        /** @var LocalCacheInvalidator $invalidator */
+        $invalidator = $container->make(LocalCacheInvalidator::class);
+        $invalidator->recordApplied($version);
+
+        $container->make(Factory::class)
+            ->connection('fof.cache')
+            ->set(DistributedCacheInvalidation::VERSION_KEY, (string) $version);
+
+        $response = $this->runMiddleware($invalidator);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertFileExists($sentinel, 'An up-to-date pod must not re-apply the same epoch');
+        $this->assertSame($version, $invalidator->appliedVersion());
+
+        @unlink($sentinel);
+    }
+
+    /**
+     * @test
+     */
     public function middleware_applies_newer_epoch_and_clears_local_caches()
     {
         $this->requiresRedis();
@@ -184,9 +261,15 @@ class PubSubCacheInvalidationTest extends TestCase
         $this->assertSame(200, $response->getStatusCode());
         $this->assertFileDoesNotExist($sentinel, 'A pod behind the epoch should clear its local caches before serving');
         $this->assertSame($version, $invalidator->appliedVersion());
-        $this->assertNull(
-            $settingsCache->get('flarum:settings'),
-            'Applying an epoch should also drop the shared settings cache, killing stale snapshots'
+
+        // The apply drops the poisoned snapshot; a settings read later in the
+        // apply (e.g. while flushing compiled assets) may legitimately re-warm
+        // the cache FROM THE DATABASE, so the guarantee is "the stale snapshot
+        // is gone", not "the cache is empty".
+        $cached = $settingsCache->get('flarum:settings');
+        $this->assertTrue(
+            $cached === null || (is_array($cached) && !array_key_exists('stale', $cached)),
+            'Applying an epoch should drop the stale settings snapshot'
         );
     }
 
@@ -231,6 +314,7 @@ class PubSubCacheInvalidationTest extends TestCase
             $container->make(Factory::class),
             $invalidator,
             'fof.cache',
+            DistributedCacheInvalidation::VERSION_KEY,
             0
         );
 
@@ -298,54 +382,5 @@ class PubSubCacheInvalidationTest extends TestCase
         } catch (\Exception $e) {
             $this->markTestSkipped('Redis is not available: '.$e->getMessage());
         }
-    }
-}
-
-/**
- * Redis factory decorator that records publishes on the fof.cache connection
- * and forwards everything else to the real manager.
- */
-class PublishSpyFactory implements Factory
-{
-    /** @var array<int, array{channel: string, message: string}> */
-    public array $published = [];
-
-    public function __construct(protected Factory $inner)
-    {
-    }
-
-    public function connection($name = null)
-    {
-        $connection = $this->inner->connection($name);
-
-        if ($name === 'fof.cache') {
-            return new PublishSpyConnection($connection, $this);
-        }
-
-        return $connection;
-    }
-}
-
-class PublishSpyConnection
-{
-    public function __construct(
-        protected $inner,
-        protected PublishSpyFactory $spy
-    ) {
-    }
-
-    public function publish($channel, $message)
-    {
-        $this->spy->published[] = [
-            'channel' => (string) $channel,
-            'message' => (string) $message,
-        ];
-
-        return $this->inner->publish($channel, $message);
-    }
-
-    public function __call($method, $arguments)
-    {
-        return $this->inner->{$method}(...$arguments);
     }
 }
