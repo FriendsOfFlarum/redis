@@ -18,8 +18,10 @@ use Flarum\Extension\Event\Enabled;
 use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Foundation\Paths;
 use Flarum\Settings\Event\Saved;
+use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Configuration;
 use FoF\Redis\Event\CacheConnectionReady;
+use FoF\Redis\Middleware\DistributedCacheInvalidation;
 use FoF\Redis\Overrides\RedisManager;
 use Illuminate\Cache\RedisStore;
 use Illuminate\Cache\Repository;
@@ -87,10 +89,18 @@ class Cache extends Provider
                 /** @var RedisManager $redis */
                 $redis = $container->make(Factory::class);
 
+                $version = (int) round(microtime(true) * 1000);
+
+                // Durable epoch for the middleware backstop: pods that miss the
+                // pub/sub message (subscriber down) or race its delivery catch
+                // up synchronously on their next request.
+                $redis->connection($this->connection)
+                    ->set(DistributedCacheInvalidation::VERSION_KEY, (string) $version);
+
                 $message = json_encode([
                     'timestamp' => time(),
                     'source'    => gethostname(),
-                    'version'   => time(),
+                    'version'   => $version,
                 ]);
 
                 $redis->connection($this->connection)->publish($pubSubConfig['channel'], $message);
@@ -114,6 +124,25 @@ class Cache extends Provider
         // too — otherwise they serve stale translations until the next
         // explicit cache:clear.
         $events->listen([Enabled::class, Disabled::class, Saved::class], $publishInvalidation);
+
+        if ($pubSubConfig['enabled']) {
+            $container->bind(DistributedCacheInvalidation::class, function ($container) use ($pubSubConfig) {
+                return new DistributedCacheInvalidation(
+                    $container->make(Factory::class),
+                    $container->make(LocalCacheInvalidator::class),
+                    $this->connection,
+                    $pubSubConfig['check_interval']
+                );
+            });
+
+            foreach (['forum', 'admin', 'api'] as $frontend) {
+                $container->extend("flarum.{$frontend}.middleware", function ($middleware) {
+                    $middleware[] = DistributedCacheInvalidation::class;
+
+                    return $middleware;
+                });
+            }
+        }
     }
 
     private function normalizePubSubConfig(array $config): array
@@ -131,6 +160,9 @@ class Cache extends Provider
             'channel'        => $config['channel'] ?? 'flarum:cache:invalidate',
             'delay'          => (int) ($config['delay'] ?? 0),
             'spawn_lock_ttl' => (int) ($config['spawn_lock_ttl'] ?? 300),
+            // Seconds between per-worker epoch checks in the request middleware.
+            // 0 (default) checks on every request — one Redis GET, sub-millisecond.
+            'check_interval' => max(0, (int) ($config['check_interval'] ?? 0)),
         ];
     }
 

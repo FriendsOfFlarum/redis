@@ -17,12 +17,20 @@ use Flarum\Extension\Event\Disabled;
 use Flarum\Extension\Event\Enabled;
 use Flarum\Extension\Extension;
 use Flarum\Foundation\Event\ClearingCache;
+use Flarum\Foundation\Paths;
 use Flarum\Settings\Event\Saved;
 use Flarum\Testing\integration\TestCase;
+use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Console\CacheSubscribeCommand;
 use FoF\Redis\Extend\Redis as RedisExtender;
+use FoF\Redis\Middleware\DistributedCacheInvalidation;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory;
+use Laminas\Diactoros\Response;
+use Laminas\Diactoros\ServerRequest;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Server\RequestHandlerInterface;
 
 class PubSubCacheInvalidationTest extends TestCase
 {
@@ -122,6 +130,118 @@ class PubSubCacheInvalidationTest extends TestCase
         $published = $this->dispatchWithPublishSpy(new ClearingCache());
 
         $this->assertPublishedInvalidation($published);
+    }
+
+    /**
+     * @test
+     */
+    public function invalidation_events_bump_the_shared_epoch()
+    {
+        $this->requiresRedis();
+
+        $container = $this->app()->getContainer();
+
+        $before = (int) round(microtime(true) * 1000);
+
+        $container->make(Dispatcher::class)->dispatch(new Saved(['welcome_title' => 'Changed']));
+
+        $version = (int) $container->make(Factory::class)
+            ->connection('fof.cache')
+            ->get(DistributedCacheInvalidation::VERSION_KEY);
+
+        $this->assertGreaterThanOrEqual($before, $version, 'The shared epoch should be bumped alongside the publish');
+    }
+
+    /**
+     * @test
+     */
+    public function middleware_applies_newer_epoch_and_clears_local_caches()
+    {
+        $this->requiresRedis();
+
+        $container = $this->app()->getContainer();
+
+        /** @var Paths $paths */
+        $paths = $container->make(Paths::class);
+        @mkdir($paths->storage.'/locale', 0777, true);
+        $sentinel = $paths->storage.'/locale/sentinel.tmp';
+        file_put_contents($sentinel, 'stale catalogue');
+
+        /** @var LocalCacheInvalidator $invalidator */
+        $invalidator = $container->make(LocalCacheInvalidator::class);
+        $invalidator->recordApplied(1);
+
+        $version = (int) round(microtime(true) * 1000);
+        $container->make(Factory::class)
+            ->connection('fof.cache')
+            ->set(DistributedCacheInvalidation::VERSION_KEY, (string) $version);
+
+        $settingsCache = $container->make('cache.settings');
+        $settingsCache->forever('flarum:settings', ['stale' => 'snapshot']);
+
+        $response = $this->runMiddleware($invalidator);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertFileDoesNotExist($sentinel, 'A pod behind the epoch should clear its local caches before serving');
+        $this->assertSame($version, $invalidator->appliedVersion());
+        $this->assertNull(
+            $settingsCache->get('flarum:settings'),
+            'Applying an epoch should also drop the shared settings cache, killing stale snapshots'
+        );
+    }
+
+    /**
+     * @test
+     */
+    public function middleware_adopts_epoch_without_clearing_on_first_sight()
+    {
+        $this->requiresRedis();
+
+        $container = $this->app()->getContainer();
+
+        /** @var Paths $paths */
+        $paths = $container->make(Paths::class);
+        @mkdir($paths->storage.'/locale', 0777, true);
+        $sentinel = $paths->storage.'/locale/sentinel.tmp';
+        file_put_contents($sentinel, 'fresh pod');
+
+        /** @var LocalCacheInvalidator $invalidator */
+        $invalidator = $container->make(LocalCacheInvalidator::class);
+        @unlink($invalidator->epochFilePath());
+
+        $version = (int) round(microtime(true) * 1000);
+        $container->make(Factory::class)
+            ->connection('fof.cache')
+            ->set(DistributedCacheInvalidation::VERSION_KEY, (string) $version);
+
+        $response = $this->runMiddleware($invalidator);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertFileExists($sentinel, 'A pod with no epoch record has fresh caches and must not clear them');
+        $this->assertSame($version, $invalidator->appliedVersion());
+
+        @unlink($sentinel);
+    }
+
+    private function runMiddleware(LocalCacheInvalidator $invalidator): ResponseInterface
+    {
+        $container = $this->app()->getContainer();
+
+        $middleware = new DistributedCacheInvalidation(
+            $container->make(Factory::class),
+            $invalidator,
+            'fof.cache',
+            0
+        );
+
+        $handler = new class() implements RequestHandlerInterface {
+            public function handle(ServerRequestInterface $request): ResponseInterface
+            {
+                return new Response();
+            }
+        };
+
+        return $middleware->process(new ServerRequest(), $handler);
     }
 
     /**

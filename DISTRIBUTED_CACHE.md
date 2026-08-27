@@ -28,7 +28,11 @@ This causes missing translations (raw `core.*` keys), stale assets, and other ca
 2. Pod B subscriber receives the message:
    - Invalidates local file caches immediately
 
-3. All pods stay synchronized in near real time (message delivery is asynchronous — a request racing the delivery window can still rebuild from stale state for a moment)
+3. **Epoch backstop (synchronous):** Pod A also bumps a shared epoch value in Redis (`flarum:cache:version`). Before serving a request, each pod compares that epoch with the one it last applied (recorded in a pod-local file) and clears its local caches first when behind. This covers what pub/sub alone cannot:
+   - a request racing the asynchronous message delivery (it can no longer rebuild shared assets from stale local state)
+   - a message published while a pod's subscriber was down (pub/sub has no replay — the epoch is durable)
+
+4. All pods stay synchronized: pub/sub is the fast path, the epoch check is the correctness guarantee
 
 ### What Gets Invalidated
 
@@ -72,6 +76,9 @@ return [
             'channel' => 'flarum:cache:invalidate',
             'delay' => 0,
             'spawn_lock_ttl' => 300,
+            // Seconds between per-worker epoch checks in the request middleware.
+            // 0 (default) checks on every request — one Redis GET, sub-millisecond.
+            'check_interval' => 0,
         ],
     ]))
 ];
@@ -142,19 +149,17 @@ Pub/Sub avoids per-request checks entirely and only does work when a cache clear
 
 ### Race Conditions?
 
-**Scenario:** Admin clears cache during high traffic
+**Scenario:** Admin clears cache (or toggles an extension / saves settings) during high traffic
 
-**Safe because:**
-1. Event fires AFTER core finishes clearing
-2. Version signal written to Redis after local clear
-3. Other pods receive the message and clear immediately
-4. Each pod clears independently (no locks needed)
-5. Worst case: Brief delay for message delivery
+Pub/sub alone is not safe here: delivery is asynchronous, so a request landing on another pod inside the delivery window used to rebuild the shared compiled assets from that pod's still-stale locale catalogue — poisoning them for everyone until the next invalidation. Under constant traffic there is virtually always such a request.
 
-**Not a problem because:**
-- Cache clears are infrequent (admin operations)
-- 5-second delay is acceptable
-- Eventually consistent is sufficient
+**Safe now because:**
+1. The epoch is written to Redis before the message is published
+2. Each pod checks the epoch synchronously before serving a request and clears its local caches first when behind — a rebuild can no longer start from stale local state
+3. Applying an epoch also re-flushes the compiled assets, so anything poisoned inside the tiny remaining in-flight window is erased as pods catch up
+4. Each pod applies independently and idempotently (no locks needed); the applied epoch is recorded per pod so nothing is cleared twice
+
+**Residual window:** a request already past the epoch check when the invalidation lands can theoretically still write a stale asset after the last pod catches up. This is a tens-of-milliseconds sliver, and any later invalidation event heals it.
 
 ## Future Improvements
 
