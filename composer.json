@@ -38,6 +38,11 @@
             "FoF\\Redis\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "FoF\\Redis\\Tests\\": "tests/"
+        }
+    },
     "require-dev": {
         "flarum/phpstan": "*",
         "flarum/testing": "*",

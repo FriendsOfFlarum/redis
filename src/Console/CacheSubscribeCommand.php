@@ -15,25 +15,21 @@ namespace FoF\Redis\Console;
 
 use Flarum\Console\AbstractCommand;
 use Flarum\Foundation\Paths;
-use Flarum\Locale\LocaleManager;
+use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Overrides\RedisManager;
-use Illuminate\Cache\Repository;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Console\Input\InputOption;
 
 class CacheSubscribeCommand extends AbstractCommand
 {
     protected Paths $paths;
-    protected LocaleManager $locales;
     protected LoggerInterface $logger;
 
     public function __construct(
         Paths $paths,
-        LocaleManager $locales,
         LoggerInterface $logger
     ) {
         $this->paths = $paths;
-        $this->locales = $locales;
         $this->logger = $logger;
         parent::__construct();
     }
@@ -253,7 +249,7 @@ class CacheSubscribeCommand extends AbstractCommand
             ]);
 
             // Invalidate local caches
-            $this->invalidateLocalCaches();
+            $this->invalidateLocalCaches((int) ($data['version'] ?? 0));
 
             $this->info('[Cache Subscriber] ✓ Local caches cleared');
             $this->logger->info('[Cache Subscriber] Local caches cleared successfully', ['pod' => $podId]);
@@ -274,32 +270,20 @@ class CacheSubscribeCommand extends AbstractCommand
     /**
      * Invalidate local file caches and in-memory translator catalogues.
      *
-     * This replicates the legacy distributed cache invalidation logic.
+     * Records the applied epoch so the request middleware does not re-apply
+     * the same invalidation.
      */
-    private function invalidateLocalCaches(): void
+    private function invalidateLocalCaches(int $version = 0): void
     {
         try {
-            // CRITICAL: Flush FileStore cache FIRST before deleting files
-            // This prevents __PHP_Incomplete_Class__ errors with TextFormatter
-            // The FileStore contains serialized formatter objects that reference
-            // class files in storage/formatter/. We must clear the serialized cache
-            // before deleting the class files, otherwise unserialization fails.
-            (new Repository(resolve('cache.filestore')))->flush();
+            /** @var LocalCacheInvalidator $invalidator */
+            $invalidator = resolve(LocalCacheInvalidator::class);
+            $invalidator->invalidate();
 
-            // Clear file caches (suppress warnings if files don't exist)
-            @array_map('unlink', glob($this->paths->storage.'/formatter/*') ?: []);
-            @array_map('unlink', glob($this->paths->storage.'/locale/*') ?: []);
-            @array_map('unlink', glob($this->paths->storage.'/views/*') ?: []);
-
-            // Clear in-memory Symfony translator catalogues
-            // This is crucial because Symfony caches translations in protected $catalogues array
-            $this->locales->clearCache();
-
-            // Clear OPcache if available
-            if (function_exists('opcache_reset')) {
-                opcache_reset();
+            if ($version > 0) {
+                $invalidator->recordApplied($version);
             }
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Fail gracefully - log but don't break the subscriber
             $this->error("[Cache Subscriber] Failed to invalidate caches: {$e->getMessage()}");
             $this->logger->error('[Cache Subscriber] Failed to invalidate local caches', [

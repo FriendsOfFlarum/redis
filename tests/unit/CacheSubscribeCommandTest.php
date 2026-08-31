@@ -14,7 +14,6 @@
 namespace FoF\Redis\Tests\unit;
 
 use Flarum\Foundation\Paths;
-use Flarum\Locale\LocaleManager;
 use FoF\Redis\Console\CacheSubscribeCommand;
 use Mockery\Adapter\Phpunit\MockeryPHPUnitIntegration;
 use PHPUnit\Framework\TestCase;
@@ -35,10 +34,9 @@ class CacheSubscribeCommandTest extends TestCase
             'storage' => sys_get_temp_dir().'/flarum-redis-test-storage',
         ]);
 
-        $locales = \Mockery::mock(LocaleManager::class);
         $logger = \Mockery::mock(LoggerInterface::class);
 
-        $command = new CacheSubscribeCommand($paths, $locales, $logger);
+        $command = new CacheSubscribeCommand($paths, $logger);
         $definition = $command->getDefinition();
 
         $this->assertTrue($definition->hasOption('once'));
