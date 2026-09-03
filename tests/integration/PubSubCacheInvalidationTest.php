@@ -240,9 +240,30 @@ class PubSubCacheInvalidationTest extends TestCase
 
         /** @var Paths $paths */
         $paths = $container->make(Paths::class);
+
+        // Only the locale catalogues may be deleted by an apply.
         @mkdir($paths->storage.'/locale', 0777, true);
-        $sentinel = $paths->storage.'/locale/sentinel.tmp';
-        file_put_contents($sentinel, 'stale catalogue');
+        $localeSentinel = $paths->storage.'/locale/sentinel.tmp';
+        file_put_contents($localeSentinel, 'stale catalogue');
+
+        // Everything a concurrent request may still be using must survive:
+        // the formatter's renderer class files (deleting them mid-request
+        // yields an incomplete object and a 500), the compiled Blade views,
+        // and the shared compiled assets with their revision manifest.
+        @mkdir($paths->storage.'/formatter', 0777, true);
+        $formatterSentinel = $paths->storage.'/formatter/Renderer_sentinel.php';
+        file_put_contents($formatterSentinel, '<?php class Renderer_sentinel {}');
+
+        @mkdir($paths->storage.'/views', 0777, true);
+        $viewSentinel = $paths->storage.'/views/sentinel.php';
+        file_put_contents($viewSentinel, '<?php /* compiled view */');
+
+        @mkdir($paths->public.'/assets', 0777, true);
+        $manifest = $paths->public.'/assets/rev-manifest.json';
+        $manifestBefore = file_exists($manifest) ? file_get_contents($manifest) : '{"forum.js":"sentinel"}';
+        file_put_contents($manifest, $manifestBefore);
+        $assetSentinel = $paths->public.'/assets/forum-sentinel.js';
+        file_put_contents($assetSentinel, '/* compiled asset */');
 
         /** @var LocalCacheInvalidator $invalidator */
         $invalidator = $container->make(LocalCacheInvalidator::class);
@@ -259,18 +280,26 @@ class PubSubCacheInvalidationTest extends TestCase
         $response = $this->runMiddleware($invalidator);
 
         $this->assertSame(200, $response->getStatusCode());
-        $this->assertFileDoesNotExist($sentinel, 'A pod behind the epoch should clear its local caches before serving');
         $this->assertSame($version, $invalidator->appliedVersion());
+        $this->assertFileDoesNotExist($localeSentinel, 'A pod behind the epoch should clear its locale catalogues before serving');
 
-        // The apply drops the poisoned snapshot; a settings read later in the
-        // apply (e.g. while flushing compiled assets) may legitimately re-warm
-        // the cache FROM THE DATABASE, so the guarantee is "the stale snapshot
-        // is gone", not "the cache is empty".
+        $this->assertFileExists($formatterSentinel, 'An apply must not delete formatter class files a concurrent request may be unserializing');
+        $this->assertFileExists($viewSentinel, 'An apply must not delete compiled Blade views');
+        $this->assertFileExists($assetSentinel, 'An apply must not delete the shared compiled assets');
+        $this->assertSame($manifestBefore, file_get_contents($manifest), 'An apply must not rewrite the shared revision manifest');
+
+        // The apply drops the poisoned snapshot; a later settings read may
+        // legitimately re-warm the cache FROM THE DATABASE, so the guarantee is
+        // "the stale snapshot is gone", not "the cache is empty".
         $cached = $settingsCache->get('flarum:settings');
         $this->assertTrue(
             $cached === null || (is_array($cached) && !array_key_exists('stale', $cached)),
             'Applying an epoch should drop the stale settings snapshot'
         );
+
+        @unlink($formatterSentinel);
+        @unlink($viewSentinel);
+        @unlink($assetSentinel);
     }
 
     /**
