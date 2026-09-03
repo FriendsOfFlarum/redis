@@ -36,10 +36,17 @@ This causes missing translations (raw `core.*` keys), stale assets, and other ca
 
 ### What Gets Invalidated
 
-- `storage/formatter/*` - TextFormatter cache
-- `storage/locale/*` - Symfony translation catalogues
-- `storage/views/*` - Blade view cache
-- In-memory Symfony translator catalogues
+An apply is deliberately **non-destructive to anything a concurrent request may be using**. It forgets cache entries rather than deleting the files they reference:
+
+- the file cache (`storage/cache`), including the serialized TextFormatter entry
+- `storage/locale/*` — the compiled Symfony catalogues, plus their OPcache entries. These are the only files an apply deletes: their names are not content-derived, so nothing else would detect staleness
+- the shared settings cache (`flarum:settings`) and the resolved settings repository instance
+
+Deliberately **not** touched:
+
+- `storage/formatter/*` — the generated renderer classes. Their names are content hashes, so a rebuilt formatter simply writes new files. Deleting them mid-traffic breaks requests that are unserializing the cached formatter (incomplete object → `\Error` → 500). Core's own `Formatter::flush()` behaves the same way; `cache:clear` sweeps the orphans
+- `storage/views/*` — Blade recompiles by source mtime, and toggles or settings saves never change template sources
+- the shared compiled frontend assets and `rev-manifest.json` — core flushes those itself, once, on the pod handling the admin action
 
 ## Architecture
 
@@ -158,11 +165,11 @@ Pub/sub alone is not safe here: delivery is asynchronous, so a request landing o
 **Safe now because:**
 1. The epoch is written to Redis before the message is published
 2. Each pod checks the epoch synchronously before serving a request and clears its local caches first when behind — a rebuild can no longer start from stale local state
-3. Applying an epoch also re-flushes the compiled assets, so anything poisoned inside the tiny remaining in-flight window is erased as pods catch up
+3. The shared compiled assets and their revision manifest are flushed **only by core, once, on the pod handling the admin action**. This extension never touches them: an apply on every pod meant several concurrent writers on `rev-manifest.json`, whose updates are non-atomic read-modify-writes — interleavings lose updates and leave a revision pointing at stale content, which browsers and CDNs then cache until the next admin action
 4. Applying an epoch also drops the shared settings cache, so a pre-change snapshot re-stored by a racing refill lives milliseconds, not the full TTL
 5. Each pod applies independently and idempotently; concurrent workers on one pod are serialized by an atomic claim, and the applied epoch is recorded per pod (and per SAPI) so nothing is cleared twice
 
-**Residual window:** a request already past the epoch check when the invalidation lands can theoretically still write a stale asset after the last pod catches up. This is a tens-of-milliseconds sliver, and any later invalidation event heals it.
+**Residual window:** after core flushes the compiled assets on a toggle, the next request to render a page rebuilds them. If that request booted just before the toggle, it can bake the pre-change state into the shared asset, which then persists until the next admin action. This is core's own lazy-rebuild behaviour on 1.x (Flarum 2.x defers the rebuild to a freshly-booted request for exactly this reason); clicking *Clear Cache* once after a toggle rebuilds from a settled state.
 
 ## Future Improvements
 
