@@ -14,7 +14,6 @@
 namespace FoF\Redis\Cache;
 
 use Flarum\Foundation\Paths;
-use Flarum\Frontend\RecompileFrontendAssets;
 use Flarum\Locale\LocaleManager;
 use Flarum\Settings\SettingsRepositoryInterface;
 use Illuminate\Cache\Repository;
@@ -22,17 +21,19 @@ use Illuminate\Contracts\Container\Container;
 use Psr\Log\LoggerInterface;
 
 /**
- * Applies a cache invalidation on this pod: clears the pod-local file caches,
- * drops the shared settings cache, and flushes the compiled frontend assets so
- * the next rebuild happens from fresh state. (Flushing is safe here on 1.x:
- * FileVersioner reads the revision manifest fresh from disk on every call, so
- * a long-running subscriber cannot rewrite it from a stale snapshot.).
+ * Applies a cache invalidation on this pod.
+ *
+ * The apply is deliberately NON-DESTRUCTIVE to anything a concurrent request
+ * may be using: it forgets cache entries (pointers) rather than deleting the
+ * files those entries reference, and never touches the shared compiled assets.
+ * The only files it removes are the compiled locale catalogues, whose names are
+ * not content-derived — deletion is the only way to force their rebuild.
  *
  * The applied epoch is recorded per pod AND per SAPI: the CLI subscriber and
  * php-fpm each keep their own record, because some work is only effective in
- * the SAPI that performs it (opcache_reset() in a CLI process cannot touch
- * php-fpm's OPcache). The invalidation is idempotent, so applying it once per
- * SAPI is safe and cheap.
+ * the SAPI that performs it (OPcache invalidation from the CLI subscriber cannot
+ * touch php-fpm's OPcache). The invalidation is idempotent, so applying it once
+ * per SAPI is safe and cheap.
  */
 class LocalCacheInvalidator
 {
@@ -60,22 +61,26 @@ class LocalCacheInvalidator
 
     public function invalidate(): void
     {
-        // CRITICAL: Flush FileStore cache FIRST before deleting files
-        // This prevents __PHP_Incomplete_Class__ errors with TextFormatter
-        // The FileStore contains serialized formatter objects that reference
-        // class files in storage/formatter/. We must clear the serialized cache
-        // before deleting the class files, otherwise unserialization fails.
+        // Forget the file-cache entries (among them `flarum.formatter`, the
+        // serialized TextFormatter). The formatter's generated renderer CLASS
+        // FILES in storage/formatter/ are deliberately left in place: their
+        // names are content hashes, so a rebuilt formatter writes new files and
+        // the superseded ones are inert. Deleting them mid-traffic breaks
+        // requests that are unserializing the cached formatter — the class file
+        // vanishes, the object comes back incomplete, and calling a method on it
+        // throws \Error (not \Exception, so it escapes core's render guard and
+        // becomes a 500). Core's own runtime refresh, Formatter::flush(), also
+        // only forgets the cache entry; `cache:clear` sweeps the orphans.
         (new Repository($this->container->make('cache.filestore')))->flush();
 
-        // Clear file caches (suppress warnings if files don't exist).
-        // storage/locale is handled by LocaleManager::clearCache() below.
-        @array_map('unlink', glob($this->paths->storage.'/formatter/*') ?: []);
-        @array_map('unlink', glob($this->paths->storage.'/views/*') ?: []);
+        // Compiled Blade views are left alone for the same reason: Blade
+        // recompiles by source mtime, and toggles or settings saves never change
+        // template sources (deployments do, and those run cache:clear).
 
-        // Delete the compiled Symfony catalogue files. The catalogue cache file
-        // names are not keyed by their source resources, so this is what forces
-        // a rebuild from the (always-correct) YAML sources.
-        $this->locales->clearCache();
+        // The compiled locale catalogues are the exception: their filenames are
+        // not derived from their contents, so nothing detects staleness and
+        // deletion is the only way to force a rebuild from the YAML sources.
+        $this->clearLocaleCatalogues();
 
         // Drop the shared settings cache as well: a concurrent refill that read the DB
         // just before the invalidating write can re-store a pre-change snapshot AFTER
@@ -97,17 +102,35 @@ class LocalCacheInvalidator
             }
         }
 
-        // Flush the compiled frontend assets too. They may have been rebuilt by a pod
-        // whose locale catalogue was still stale (the assets live on shared storage but
-        // are compiled from pod-local state); flushing them after clearing our local
-        // caches means the next rebuild happens from fresh state.
-        $this->flushCompiledAssets();
+        // NOTE: the shared compiled frontend assets are deliberately NOT touched.
+        // Core flushes them itself, once, on the pod that handles the admin
+        // action. Flushing again from every pod's apply meant up to 2N actors
+        // per toggle rewriting rev-manifest.json, whose updates are non-atomic
+        // read-modify-writes: interleavings lose updates, leaving a revision
+        // pointing at stale content that browsers and CDNs then cache until the
+        // next admin action.
+    }
 
-        // Clear OPcache if available. Only effective for the SAPI we run in (a CLI
-        // subscriber cannot reset php-fpm's OPcache) — which is why the applied
-        // epoch is recorded per SAPI: php-fpm performs its own apply.
-        if (function_exists('opcache_reset')) {
-            opcache_reset();
+    /**
+     * Delete the compiled locale catalogues and drop their OPcache entries.
+     *
+     * Targeted invalidation rather than opcache_reset(): a global reset
+     * restarts the whole php-fpm pool mid-traffic (recompile storm, and
+     * lazily-autoloaded classes can fail during the swap), which is far more
+     * disruptive than the staleness it guards against.
+     */
+    protected function clearLocaleCatalogues(): void
+    {
+        $files = glob($this->paths->storage.'/locale/*.php') ?: [];
+
+        $this->locales->clearCache();
+
+        if (!function_exists('opcache_invalidate')) {
+            return;
+        }
+
+        foreach ($files as $file) {
+            @opcache_invalidate($file, true);
         }
     }
 
@@ -148,7 +171,7 @@ class LocalCacheInvalidator
     /**
      * Atomically claim the right to apply an epoch, so concurrent php-fpm
      * workers crossing the same request boundary don't all run the full
-     * invalidation (N concurrent opcache resets). fopen('x') is the exclusive
+     * invalidation at once). fopen('x') is the exclusive
      * primitive; a stale claim from a crashed worker is broken after 60s.
      */
     public function claimEpoch(int $version): bool
@@ -215,20 +238,6 @@ class LocalCacheInvalidator
         $host = gethostname() ?: 'pod';
 
         return preg_replace('/[^A-Za-z0-9_.-]/', '-', $host).'-'.PHP_SAPI;
-    }
-
-    protected function flushCompiledAssets(): void
-    {
-        foreach (['forum', 'admin'] as $frontend) {
-            try {
-                (new RecompileFrontendAssets(
-                    $this->container->make("flarum.assets.$frontend"),
-                    $this->locales
-                ))->flush();
-            } catch (\Throwable $e) {
-                // A frontend may not be bound in some contexts; skip it.
-            }
-        }
     }
 
     /**
