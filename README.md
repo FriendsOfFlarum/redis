@@ -323,7 +323,7 @@ composer update fof/redis
 ### FAQ
 
 *Why are there still files in storage/cache?*
-Some code still relies on physical files being present. This includes the formatter cache and the view caches.
+Some code still relies on physical files being present. This includes the formatter cache and the view caches. A propagated invalidation (see [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md)) leaves those files in place — they are content- and mtime-keyed — and deletes only the compiled locale catalogues.
 
 ### Links
 

@@ -24,17 +24,26 @@ use Illuminate\Contracts\Events\Dispatcher;
 use Psr\Log\LoggerInterface;
 
 /**
- * Applies a cache invalidation on this pod: clears the pod-local file caches,
- * drops the shared settings cache, and marks every compiled asset set dirty so
- * core rebuilds it in place on the next request (see
+ * Applies a cache invalidation on this pod: forgets the pod-local cache
+ * entries, drops the shared settings cache, and marks every compiled asset set
+ * dirty so core rebuilds it in place on the next request (see
  * RecompileFrontendAssets::markDirty() — nothing is deleted, so already-served
  * asset URLs keep resolving and the revision token doesn't flicker).
  *
+ * The apply forgets cache entries rather than deleting the files those entries
+ * reference. The only files it removes are the compiled locale catalogues,
+ * whose names are not content-derived — deletion is the only way to force
+ * their rebuild. That deletion has the same microsecond window (is_file() →
+ * include) that core's own Extend\Locales::onEnable/onDisable has on the
+ * acting pod.
+ *
  * The applied epoch is recorded per pod AND per SAPI: the CLI subscriber and
- * php-fpm each keep their own record, because some work is only effective in
- * the SAPI that performs it (opcache_reset() in a CLI process cannot touch
- * php-fpm's OPcache). The invalidation is idempotent, so applying it once per
- * SAPI is safe and cheap.
+ * php-fpm each keep their own record, so php-fpm performs its own apply even
+ * when the subscriber already did (OPcache is per process pool: entries
+ * dropped by the CLI process do not affect php-fpm's). The invalidation is
+ * idempotent, so applying it once per SAPI is safe. Now that the apply no
+ * longer resets OPcache globally, the second apply buys little — collapsing
+ * the two is a possible follow-up.
  */
 class LocalCacheInvalidator
 {
@@ -47,23 +56,36 @@ class LocalCacheInvalidator
 
     public function invalidate(): void
     {
-        // CRITICAL: Flush FileStore cache FIRST before deleting files
-        // This prevents __PHP_Incomplete_Class__ errors with TextFormatter
-        // The FileStore contains serialized formatter objects that reference
-        // class files in storage/formatter/. We must clear the serialized cache
-        // before deleting the class files, otherwise unserialization fails.
+        // Flush the file cache; its core tenant is `flarum.formatter`, the
+        // serialized TextFormatter (core's own Formatter::flush() forgets just
+        // that key). The formatter's generated renderer CLASS FILES in
+        // storage/formatter/ are deliberately left in place, matching core's
+        // runtime refresh: Formatter::flush() and the Formatter extender's
+        // onEnable/onDisable only forget the cache entry, and `cache:clear` is
+        // what sweeps the files. The renderer class is autoloaded from that
+        // file DURING unserialize(); deleting it while another request is
+        // unserializing the cached formatter — a microsecond window — leaves
+        // that request with an incomplete object, and a method call on it
+        // throws \Error, which core's render guard (catch Exception) does not
+        // catch. Residual: the class name is a hash of the generated code, so
+        // a rebuild after a config-neutral toggle rewrites the SAME file in
+        // place, non-atomically, and every concurrent request that misses the
+        // cache rebuilds it — OPcache normally serves the cached copy across
+        // that window.
         (new Repository($this->container->make('cache.filestore')))->flush();
 
-        // Clear file caches (suppress warnings if files don't exist).
-        // storage/locale is handled by LocaleManager::clearCache() below.
-        @array_map('unlink', glob($this->paths->storage.'/formatter/*') ?: []);
-        @array_map('unlink', glob($this->paths->storage.'/views/*') ?: []);
+        // Compiled Blade views are left alone too. Core deletes them on the
+        // acting pod when an extension that registers views is toggled
+        // (Extend\View), but on other pods there is nothing to fix: compiled
+        // files are keyed by the resolved source path and expire by source
+        // mtime, so they can only be stale if a template SOURCE changed —
+        // which toggles and settings saves never do (deployments do, and
+        // those run cache:clear).
 
-        // Delete the compiled Symfony catalogue files. In 2.x clearCache()
-        // only unlinks the cache dir — the catalogue cache file names are not
-        // keyed by their source resources, so this is what forces a rebuild
-        // from the (always-correct) YAML sources.
-        $this->locales->clearCache();
+        // The compiled locale catalogues are the exception: their filenames are
+        // not derived from their contents, so nothing detects staleness and
+        // deletion is the only way to force a rebuild from the YAML sources.
+        $this->clearLocaleCatalogues();
 
         // Drop the shared settings cache as well: a concurrent refill that read the DB
         // just before the invalidating write can re-store a pre-change snapshot AFTER
@@ -90,12 +112,31 @@ class LocalCacheInvalidator
         // manifest from a boot-time snapshot (FileVersioner caches it per
         // instance) and silently revert every revision recorded since.
         $this->markAssetsDirty();
+    }
 
-        // Clear OPcache if available. Only effective for the SAPI we run in (a CLI
-        // subscriber cannot reset php-fpm's OPcache) — which is why the applied
-        // epoch is recorded per SAPI: php-fpm performs its own apply.
-        if (function_exists('opcache_reset')) {
-            opcache_reset();
+    /**
+     * Delete the compiled locale catalogues and invalidate their OPcache
+     * entries in this SAPI.
+     *
+     * The invalidation is belt-and-braces: Symfony re-invalidates a catalogue
+     * when it rewrites it, and from the CLI subscriber the call is a no-op
+     * (opcache.enable_cli is off by default). It replaces the previous global
+     * opcache_reset(), which forced the whole php-fpm pool to recompile
+     * everything mid-traffic — far more disruptive than the staleness it
+     * guarded against.
+     */
+    protected function clearLocaleCatalogues(): void
+    {
+        $files = glob($this->paths->storage.'/locale/*.php') ?: [];
+
+        $this->locales->clearCache();
+
+        if (!function_exists('opcache_invalidate')) {
+            return;
+        }
+
+        foreach ($files as $file) {
+            @opcache_invalidate($file, true);
         }
     }
 
@@ -136,8 +177,8 @@ class LocalCacheInvalidator
     /**
      * Atomically claim the right to apply an epoch, so concurrent php-fpm
      * workers crossing the same request boundary don't all run the full
-     * invalidation (N concurrent opcache resets). fopen('x') is the exclusive
-     * primitive; a stale claim from a crashed worker is broken after 60s.
+     * invalidation at once. fopen('x') is the exclusive primitive; a stale
+     * claim from a crashed worker is broken after 60s.
      */
     public function claimEpoch(int $version): bool
     {
@@ -185,8 +226,8 @@ class LocalCacheInvalidator
      * The epoch record lives in the base path (like the subscriber lock files),
      * suffixed by hostname AND SAPI: the hostname keeps records per pod even
      * when the install root is a volume shared between pods, and the SAPI
-     * keeps the CLI subscriber's apply from suppressing php-fpm's (whose
-     * opcache_reset is the only one that matters).
+     * keeps the CLI subscriber's apply from suppressing php-fpm's (OPcache is
+     * per process pool, so only php-fpm's own apply reaches its OPcache).
      */
     public function epochFilePath(): string
     {
