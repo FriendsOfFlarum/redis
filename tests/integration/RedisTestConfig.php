@@ -61,10 +61,11 @@ trait RedisTestConfig
      * Register the Redis extender with all services pinned to test databases.
      *
      * @param array $queueConfig extra keys merged into the `queue` config block
+     * @param array $overrides   top-level keys replacing those of redisConfig()
      */
-    protected function registerRedis(array $queueConfig = []): void
+    protected function registerRedis(array $queueConfig = [], array $overrides = []): void
     {
-        $config = $this->redisConfig();
+        $config = array_replace($this->redisConfig(), $overrides);
         $config['queue'] = array_merge($config['queue'] ?? [], $queueConfig);
 
         $this->extend(

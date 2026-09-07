@@ -136,6 +136,10 @@ return [
 > See "Use different database for each service" below to split up the database for cache vs sessions, queue
 > because a cache clear action will clear sessions and queue jobs as well if they share the same database.
 
+#### Asset revisions
+
+When pub/sub is enabled (multi-instance setups), the extension also stores the compiled-asset revisions core normally keeps in `rev-manifest.json` in a Redis hash, because concurrent writes to that file lose updates and leave stale assets in place. Control it with `'asset_revisions' => 'auto' | 'redis' | 'file'` (default `'auto'`). Details, trade-offs and operational notes in [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md#asset-revisions-in-redis).
+
 #### Advanced configuration
 
 1. Disable specific services:

@@ -17,7 +17,9 @@ use Flarum\Extension\Event\Disabled;
 use Flarum\Extension\Event\Enabled;
 use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Foundation\Paths;
+use Flarum\Frontend\Compiler\VersionerInterface;
 use Flarum\Settings\Event\Saved;
+use FoF\Redis\Assets\RedisVersioner;
 use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Configuration;
 use FoF\Redis\Event\CacheConnectionReady;
@@ -45,7 +47,7 @@ class Cache extends Provider
         );
 
         $connectionConfig = $rawConfig;
-        Arr::forget($connectionConfig, ['pubsub']);
+        Arr::forget($connectionConfig, ['pubsub', 'asset_revisions']);
 
         $container->resolving(Factory::class, function (Factory $manager) use ($connectionConfig) {
             /** @var RedisManager $manager */
@@ -82,6 +84,29 @@ class Cache extends Provider
         });
 
         $container->alias('cache.redisstore', Store::class);
+
+        // Compiled-asset revisions: core's FileVersioner updates rev-manifest.json
+        // with a non-atomic read-modify-write. After an admin action core marks
+        // every asset set dirty and the next page or API request on EACH pod
+        // rebuilds it in place, so several pods commit concurrently —
+        // interleavings lose updates and leave stale revisions in place until
+        // the next admin action. A Redis hash makes each write a single atomic
+        // field. Rebinding core's VersionerInterface (core registers a
+        // FileVersioner singleton; extenders run after every register()) means
+        // core's compilers, Document and the assets-revision header all use it.
+        if ($this->normalizeAssetRevisions(Arr::get($rawConfig, 'asset_revisions'), $pubSubConfig['enabled']) === 'redis') {
+            // Like every other key on this connection, the client applies the
+            // configured prefix again on the wire.
+            $prefix = Arr::get($rawConfig, 'prefix', '');
+
+            $container->singleton(VersionerInterface::class, function (Container $container) use ($prefix) {
+                return new RedisVersioner(
+                    $container->make(Factory::class),
+                    $this->connection,
+                    $prefix.RedisVersioner::KEY
+                );
+            });
+        }
 
         $publishInvalidation = function () use ($container, $pubSubConfig) {
             if (!$pubSubConfig['enabled']) {
@@ -164,6 +189,24 @@ class Cache extends Provider
                 return $exclude;
             });
         }
+    }
+
+    /**
+     * Where compiled-asset revisions live: 'redis' or 'file'.
+     *
+     * 'auto' (the default, and any unrecognised value) follows pub/sub: the
+     * manifest race only matters when several instances write it, which is
+     * exactly when pub/sub is on. Single-instance setups keep core's file.
+     */
+    private function normalizeAssetRevisions(mixed $value, bool $pubSubEnabled): string
+    {
+        $value = is_string($value) ? strtolower(trim($value)) : 'auto';
+
+        if ($value === 'redis' || $value === 'file') {
+            return $value;
+        }
+
+        return $pubSubEnabled ? 'redis' : 'file';
     }
 
     private function normalizePubSubConfig(array $config, string $prefix = ''): array
