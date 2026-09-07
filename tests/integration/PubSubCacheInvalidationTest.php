@@ -24,6 +24,7 @@ use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Console\CacheSubscribeCommand;
 use FoF\Redis\Extend\Redis as RedisExtender;
 use FoF\Redis\Middleware\DistributedCacheInvalidation;
+use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory;
 use Laminas\Diactoros\Response;
@@ -54,10 +55,17 @@ class PubSubCacheInvalidationTest extends TestCase
 
     protected function tearDown(): void
     {
-        // Remove per-pod epoch records and claims so no test inherits state.
+        // Remove per-pod epoch records and claims, and the sentinel files the
+        // apply test seeds, so no test inherits state.
         try {
-            $base = $this->app()->getContainer()->make(Paths::class)->base;
-            @array_map('unlink', glob($base.'/cache-epoch-*') ?: []);
+            $paths = $this->app()->getContainer()->make(Paths::class);
+            @array_map('unlink', glob($paths->base.'/cache-epoch-*') ?: []);
+            @array_map('unlink', array_filter([
+                $paths->storage.'/formatter/Renderer_sentinel.php',
+                $paths->storage.'/views/sentinel.php',
+                $paths->public.'/assets/forum.js',
+                $paths->public.'/assets/rev-manifest.json',
+            ], 'file_exists'));
         } catch (\Exception $e) {
             // App may not have booted in this test.
         }
@@ -246,10 +254,18 @@ class PubSubCacheInvalidationTest extends TestCase
         $localeSentinel = $paths->storage.'/locale/sentinel.tmp';
         file_put_contents($localeSentinel, 'stale catalogue');
 
-        // Everything a concurrent request may still be using must survive:
-        // the formatter's renderer class files (deleting them mid-request
-        // yields an incomplete object and a 500), the compiled Blade views,
-        // and the shared compiled assets with their revision manifest.
+        // The file cache itself must be forgotten (the serialized formatter
+        // lives there under `flarum.formatter`)...
+        $fileCache = new Repository($container->make('cache.filestore'));
+        $fileCache->forever('flarum.formatter', 'stale serialized formatter');
+
+        // ...but everything a concurrent request may still be using must
+        // survive: the formatter's renderer class files (deleting them
+        // mid-request yields an incomplete object and a 500), the compiled
+        // Blade views, and the shared compiled assets with their revision
+        // manifest. The manifest is always seeded with a revision for the
+        // asset sentinel, so a re-introduced asset flush would have something
+        // to act on (`RevisionCompiler::flush()` is a no-op without one).
         @mkdir($paths->storage.'/formatter', 0777, true);
         $formatterSentinel = $paths->storage.'/formatter/Renderer_sentinel.php';
         file_put_contents($formatterSentinel, '<?php class Renderer_sentinel {}');
@@ -260,9 +276,9 @@ class PubSubCacheInvalidationTest extends TestCase
 
         @mkdir($paths->public.'/assets', 0777, true);
         $manifest = $paths->public.'/assets/rev-manifest.json';
-        $manifestBefore = file_exists($manifest) ? file_get_contents($manifest) : '{"forum.js":"sentinel"}';
+        $manifestBefore = '{"forum.js":"sentinel"}';
         file_put_contents($manifest, $manifestBefore);
-        $assetSentinel = $paths->public.'/assets/forum-sentinel.js';
+        $assetSentinel = $paths->public.'/assets/forum.js';
         file_put_contents($assetSentinel, '/* compiled asset */');
 
         /** @var LocalCacheInvalidator $invalidator */
@@ -282,6 +298,7 @@ class PubSubCacheInvalidationTest extends TestCase
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame($version, $invalidator->appliedVersion());
         $this->assertFileDoesNotExist($localeSentinel, 'A pod behind the epoch should clear its locale catalogues before serving');
+        $this->assertNull($fileCache->get('flarum.formatter'), 'An apply must forget the cached serialized formatter');
 
         $this->assertFileExists($formatterSentinel, 'An apply must not delete formatter class files a concurrent request may be unserializing');
         $this->assertFileExists($viewSentinel, 'An apply must not delete compiled Blade views');
@@ -297,9 +314,7 @@ class PubSubCacheInvalidationTest extends TestCase
             'Applying an epoch should drop the stale settings snapshot'
         );
 
-        @unlink($formatterSentinel);
-        @unlink($viewSentinel);
-        @unlink($assetSentinel);
+        // Seeded sentinels are removed in tearDown().
     }
 
     /**
