@@ -51,6 +51,7 @@ class PubSubCacheInvalidationTest extends TestCase
         try {
             $paths = $this->app()->getContainer()->make(Paths::class);
             @array_map('unlink', glob($paths->base.'/cache-epoch-*') ?: []);
+            @array_map('unlink', glob($paths->storage.'/locale/catalogue.*.sentinel.php*') ?: []);
             @array_map('unlink', array_filter([
                 $paths->storage.'/formatter/Renderer_sentinel.php',
                 $paths->storage.'/views/sentinel.php',
@@ -147,10 +148,16 @@ class PubSubCacheInvalidationTest extends TestCase
 
         /** @var Paths $paths */
         $paths = $container->make(Paths::class);
-        // Only the locale catalogues may be deleted by an apply.
+        // Only the locale catalogues may be deleted by an apply. Seed them the
+        // way Symfony actually names them — `catalogue.<locale>.<hash>.php`
+        // plus its `.meta` sibling — so this exercises the real glob and the
+        // OPcache pass over the PHP file, not just a placeholder that any
+        // wildcard would match.
         @mkdir($paths->storage.'/locale', 0777, true);
-        $sentinel = $paths->storage.'/locale/sentinel.tmp';
-        file_put_contents($sentinel, 'stale catalogue');
+        $sentinel = $paths->storage.'/locale/catalogue.en.sentinel.php';
+        file_put_contents($sentinel, '<?php return [];');
+        $sentinelMeta = $sentinel.'.meta';
+        file_put_contents($sentinelMeta, 'stale catalogue metadata');
 
         // The file cache itself must be forgotten (the serialized formatter
         // lives there under `flarum.formatter`)...
@@ -195,6 +202,7 @@ class PubSubCacheInvalidationTest extends TestCase
 
         $this->assertSame(200, $response->getStatusCode());
         $this->assertFileDoesNotExist($sentinel, 'A pod behind the epoch should clear its local caches before serving');
+        $this->assertFileDoesNotExist($sentinelMeta, 'The catalogue metadata must go with the catalogue, or Symfony reads a stale .meta');
         $this->assertSame($version, $invalidator->appliedVersion());
         $this->assertNull($fileCache->get('flarum.formatter'), 'An apply must forget the cached serialized formatter');
 
@@ -226,7 +234,7 @@ class PubSubCacheInvalidationTest extends TestCase
         /** @var Paths $paths */
         $paths = $container->make(Paths::class);
         @mkdir($paths->storage.'/locale', 0777, true);
-        $sentinel = $paths->storage.'/locale/sentinel.tmp';
+        $sentinel = $paths->storage.'/locale/catalogue.en.sentinel.php';
         file_put_contents($sentinel, 'fresh catalogue');
 
         $version = (int) round(microtime(true) * 1000);
@@ -256,7 +264,7 @@ class PubSubCacheInvalidationTest extends TestCase
         /** @var Paths $paths */
         $paths = $container->make(Paths::class);
         @mkdir($paths->storage.'/locale', 0777, true);
-        $sentinel = $paths->storage.'/locale/sentinel.tmp';
+        $sentinel = $paths->storage.'/locale/catalogue.en.sentinel.php';
         file_put_contents($sentinel, 'fresh pod');
 
         /** @var LocalCacheInvalidator $invalidator */

@@ -85,6 +85,14 @@ class LocalCacheInvalidator
         // The compiled locale catalogues are the exception: their filenames are
         // not derived from their contents, so nothing detects staleness and
         // deletion is the only way to force a rebuild from the YAML sources.
+        //
+        // markAssetsDirty() below calls markDirty(), which ALSO calls
+        // LocaleManager::clearCache() — so the deletion happens twice. Keep
+        // this call: it must run before the OPcache entries are invalidated
+        // (which needs the file list captured pre-deletion), and it keeps the
+        // apply correct even if a future core release stops clearing
+        // catalogues from markDirty() or markAssetsDirty() fails and is
+        // swallowed. The second deletion is a cheap no-op on an empty dir.
         $this->clearLocaleCatalogues();
 
         // Drop the shared settings cache as well: a concurrent refill that read the DB
@@ -115,8 +123,24 @@ class LocalCacheInvalidator
     }
 
     /**
-     * Delete the compiled locale catalogues and invalidate their OPcache
-     * entries in this SAPI.
+     * Delete the compiled locale catalogues and invalidate the OPcache entry of
+     * every PHP file among them in this SAPI.
+     *
+     * This is why an apply is needed at all on a pod that did not perform the
+     * admin action. Symfony names a compiled catalogue
+     * `catalogue.<locale>.<hash>.php`, where the hash covers only
+     * `fallback_locales` — NOT the translated content — and
+     * ConfigCache::isFresh() short-circuits to `is_file()` whenever debug is
+     * off, which is every production install. So a catalogue that predates a
+     * newly-enabled extension is considered fresh forever, and deleting the
+     * file is the only thing that forces a rebuild from the YAML sources.
+     *
+     * The file list is captured BEFORE clearCache() unlinks it, and is globbed
+     * as broadly as clearCache() itself (which deletes `/*`) so that a
+     * `.php.meta` sibling or any future compiled artefact is covered too;
+     * opcache_invalidate() is only meaningful for the PHP files, so non-PHP
+     * entries are filtered out rather than glob-restricted, which would have
+     * silently narrowed what we invalidate if Symfony changed its naming.
      *
      * The invalidation is belt-and-braces: Symfony re-invalidates a catalogue
      * when it rewrites it, and from the CLI subscriber the call is a no-op
@@ -127,7 +151,10 @@ class LocalCacheInvalidator
      */
     protected function clearLocaleCatalogues(): void
     {
-        $files = glob($this->paths->storage.'/locale/*.php') ?: [];
+        $files = array_filter(
+            glob($this->paths->storage.'/locale/*') ?: [],
+            fn (string $file) => str_ends_with($file, '.php')
+        );
 
         $this->locales->clearCache();
 
