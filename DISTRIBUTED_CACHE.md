@@ -36,10 +36,19 @@ This causes missing translations (raw `core.*` keys), stale assets, and other ca
 
 ### What Gets Invalidated
 
-- `storage/formatter/*` - TextFormatter cache
-- `storage/locale/*` - Symfony translation catalogues
-- `storage/views/*` - Blade view cache
-- In-memory Symfony translator catalogues
+An apply forgets cache entries rather than deleting the files they reference, with one exception (the locale catalogues):
+
+- the file cache (`storage/cache`) — its core tenant is the serialized TextFormatter entry; core's own `Formatter::flush()` forgets just that key
+- `storage/locale/*` — the compiled Symfony catalogues (and the in-memory translator catalogues). These are the only files an apply deletes: their names are not content-derived, so nothing else would detect staleness. The deletion has the same microsecond window (`is_file()` → `include`) that core's own `Extend\Locales` has on the acting pod. Their OPcache entries are invalidated too, as belt-and-braces — Symfony re-invalidates a catalogue when it rewrites it, and from the CLI subscriber the call is a no-op
+- the shared settings cache (`flarum:settings`) and the resolved settings repository instance
+- every compiled asset set is marked **dirty** (core's `RecompileFrontendAssets::markDirty()`), so core rebuilds it in place early in the next freshly-booted request
+
+Deliberately **not** touched:
+
+- `storage/formatter/*` — the generated renderer classes. This matches core's own runtime refresh (`Formatter::flush()` and the Formatter extender only forget the cache entry; `cache:clear` sweeps the files). The renderer class is autoloaded from its file *during* `unserialize()`; deleting it while another request is unserializing the cached formatter (a microsecond window) leaves that request with an incomplete object, and a method call on it throws `\Error`, which core's render guard does not catch. Residual, stated plainly: the class name is a hash of the generated code, so a rebuild after a config-neutral toggle rewrites the *same* file in place, non-atomically, and every concurrent request that misses the cache rebuilds it — OPcache normally serves the cached copy across that window
+- `storage/views/*` — core deletes these on the acting pod when an extension that registers views is toggled, but other pods have nothing to fix: compiled views are keyed by the resolved source path and expire by source mtime, so they can only be stale if a template *source* changed, which toggles and settings saves never do
+- the compiled frontend assets and `rev-manifest.json` — never flushed or rewritten by this extension; marking them dirty is core's own mechanism
+- OPcache as a whole — no global `opcache_reset()`; it forced the whole php-fpm pool to recompile everything mid-traffic
 
 ## Architecture
 
@@ -57,7 +66,9 @@ This causes missing translations (raw `core.*` keys), stale assets, and other ca
 
 Pub/Sub itself has near-zero per-request overhead. The epoch backstop adds one Redis `GET` per request by default (sub-millisecond; this extension already performs a Redis GET per request for the settings cache). Set `check_interval` to throttle the check per pod — the throttle uses APCu when available; without APCu the check runs on every request regardless.
 
-The epoch record is written to `<flarum root>/cache-epoch-<hostname>-<sapi>` — the base path must be writable by the web user. If it is not, the backstop disables itself and logs a warning (it never loops). The hostname suffix keeps records per pod even when the install root is a shared volume; the SAPI suffix lets php-fpm perform its own apply (a CLI subscriber cannot reset php-fpm's OPcache).
+The epoch record is written to `<flarum root>/cache-epoch-<hostname>-<sapi>` — the base path must be writable by the web user. If it is not, the backstop disables itself and logs a warning (it never loops). The hostname suffix keeps records per pod even when the install root is a shared volume; the SAPI suffix lets php-fpm perform its own apply (OPcache is per process pool, so a CLI subscriber's invalidation does not reach php-fpm's). Now that the apply no longer resets OPcache globally, php-fpm's second apply buys little; collapsing the two is a possible follow-up.
+
+An apply itself is not free. It drops the serialized formatter, so the next post-rendering requests on that pod rebuild it (concurrently — there is no lock), and it deletes the compiled catalogues, so the next requests recompile them. Every settings save triggers a full apply on every pod, although core itself reacts to a non-theme save with nothing pod-local; narrowing the `Saved` apply to the settings-cache forget it actually needs is a planned follow-up.
 
 ## Configuration
 

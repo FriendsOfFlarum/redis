@@ -23,6 +23,7 @@ use Flarum\Settings\SettingsRepositoryInterface;
 use Flarum\Testing\integration\TestCase;
 use FoF\Redis\Cache\LocalCacheInvalidator;
 use FoF\Redis\Middleware\DistributedCacheInvalidation;
+use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Redis\Factory;
 use Laminas\Diactoros\Response;
@@ -45,10 +46,18 @@ class PubSubCacheInvalidationTest extends TestCase
 
     protected function tearDown(): void
     {
-        // Remove per-pod epoch records and claims so no test inherits state.
+        // Remove per-pod epoch records and claims, and the sentinel files the
+        // apply test seeds, so no test inherits state.
         try {
-            $base = $this->app()->getContainer()->make(Paths::class)->base;
-            @array_map('unlink', glob($base.'/cache-epoch-*') ?: []);
+            $paths = $this->app()->getContainer()->make(Paths::class);
+            @array_map('unlink', glob($paths->base.'/cache-epoch-*') ?: []);
+            @array_map('unlink', glob($paths->storage.'/locale/catalogue.*.sentinel.php*') ?: []);
+            @array_map('unlink', array_filter([
+                $paths->storage.'/formatter/Renderer_sentinel.php',
+                $paths->storage.'/views/sentinel.php',
+                $paths->public.'/assets/forum.js',
+                $paths->public.'/assets/rev-manifest.json',
+            ], 'file_exists'));
         } catch (\Throwable $e) {
             // App may not have booted in this test.
         }
@@ -139,9 +148,43 @@ class PubSubCacheInvalidationTest extends TestCase
 
         /** @var Paths $paths */
         $paths = $container->make(Paths::class);
+        // Only the locale catalogues may be deleted by an apply. Seed them the
+        // way Symfony actually names them — `catalogue.<locale>.<hash>.php`
+        // plus its `.meta` sibling — so this exercises the real glob and the
+        // OPcache pass over the PHP file, not just a placeholder that any
+        // wildcard would match.
         @mkdir($paths->storage.'/locale', 0777, true);
-        $sentinel = $paths->storage.'/locale/sentinel.tmp';
-        file_put_contents($sentinel, 'stale catalogue');
+        $sentinel = $paths->storage.'/locale/catalogue.en.sentinel.php';
+        file_put_contents($sentinel, '<?php return [];');
+        $sentinelMeta = $sentinel.'.meta';
+        file_put_contents($sentinelMeta, 'stale catalogue metadata');
+
+        // The file cache itself must be forgotten (the serialized formatter
+        // lives there under `flarum.formatter`)...
+        $fileCache = new Repository($container->make('cache.filestore'));
+        $fileCache->forever('flarum.formatter', 'stale serialized formatter');
+
+        // ...but everything a concurrent request may still be using must
+        // survive: the formatter's renderer class files (deleting them
+        // mid-unserialize yields an incomplete object and a 500), the compiled
+        // Blade views, and the shared compiled assets with their revision
+        // manifest (2.x marks them dirty; it never flushes them). The manifest
+        // is seeded with a revision so a re-introduced flush would have
+        // something to act on.
+        @mkdir($paths->storage.'/formatter', 0777, true);
+        $formatterSentinel = $paths->storage.'/formatter/Renderer_sentinel.php';
+        file_put_contents($formatterSentinel, '<?php class Renderer_sentinel {}');
+
+        @mkdir($paths->storage.'/views', 0777, true);
+        $viewSentinel = $paths->storage.'/views/sentinel.php';
+        file_put_contents($viewSentinel, '<?php /* compiled view */');
+
+        @mkdir($paths->public.'/assets', 0777, true);
+        $manifest = $paths->public.'/assets/rev-manifest.json';
+        $manifestBefore = '{"forum.js":"sentinel"}';
+        file_put_contents($manifest, $manifestBefore);
+        $assetSentinel = $paths->public.'/assets/forum.js';
+        file_put_contents($assetSentinel, '/* compiled asset */');
 
         /** @var LocalCacheInvalidator $invalidator */
         $invalidator = $container->make(LocalCacheInvalidator::class);
@@ -159,7 +202,14 @@ class PubSubCacheInvalidationTest extends TestCase
 
         $this->assertSame(200, $response->getStatusCode());
         $this->assertFileDoesNotExist($sentinel, 'A pod behind the epoch should clear its local caches before serving');
+        $this->assertFileDoesNotExist($sentinelMeta, 'The catalogue metadata must go with the catalogue, or Symfony reads a stale .meta');
         $this->assertSame($version, $invalidator->appliedVersion());
+        $this->assertNull($fileCache->get('flarum.formatter'), 'An apply must forget the cached serialized formatter');
+
+        $this->assertFileExists($formatterSentinel, 'An apply must not delete formatter class files a concurrent request may be unserializing');
+        $this->assertFileExists($viewSentinel, 'An apply must not delete compiled Blade views');
+        $this->assertFileExists($assetSentinel, 'An apply must not delete the shared compiled assets');
+        $this->assertSame($manifestBefore, file_get_contents($manifest), 'An apply must not rewrite the shared revision manifest');
 
         // The apply drops the poisoned snapshot; the asset-dirty writes that
         // follow may legitimately re-warm the cache FROM THE DATABASE (2.x's
@@ -184,7 +234,7 @@ class PubSubCacheInvalidationTest extends TestCase
         /** @var Paths $paths */
         $paths = $container->make(Paths::class);
         @mkdir($paths->storage.'/locale', 0777, true);
-        $sentinel = $paths->storage.'/locale/sentinel.tmp';
+        $sentinel = $paths->storage.'/locale/catalogue.en.sentinel.php';
         file_put_contents($sentinel, 'fresh catalogue');
 
         $version = (int) round(microtime(true) * 1000);
@@ -214,7 +264,7 @@ class PubSubCacheInvalidationTest extends TestCase
         /** @var Paths $paths */
         $paths = $container->make(Paths::class);
         @mkdir($paths->storage.'/locale', 0777, true);
-        $sentinel = $paths->storage.'/locale/sentinel.tmp';
+        $sentinel = $paths->storage.'/locale/catalogue.en.sentinel.php';
         file_put_contents($sentinel, 'fresh pod');
 
         /** @var LocalCacheInvalidator $invalidator */
