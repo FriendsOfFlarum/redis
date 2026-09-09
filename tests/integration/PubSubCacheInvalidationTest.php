@@ -166,11 +166,7 @@ class PubSubCacheInvalidationTest extends TestCase
         $catalogue = $paths->storage.'/locale/catalogue.en.sentinel.php';
         file_put_contents($catalogue, '<?php return [];');
 
-        $invalidator = new class(
-            $container,
-            $paths,
-            $container->make(LocaleManager::class)
-        ) extends LocalCacheInvalidator {
+        $invalidator = new class($container, $paths, $container->make(LocaleManager::class)) extends LocalCacheInvalidator {
             /** @var list<string> */
             public array $invalidated = [];
 
