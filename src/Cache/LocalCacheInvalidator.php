@@ -82,18 +82,21 @@ class LocalCacheInvalidator
         // which toggles and settings saves never do (deployments do, and
         // those run cache:clear).
 
-        // The compiled locale catalogues are the exception: their filenames are
-        // not derived from their contents, so nothing detects staleness and
-        // deletion is the only way to force a rebuild from the YAML sources.
+        // Invalidate the OPcache entry of every compiled locale catalogue.
         //
-        // markAssetsDirty() below calls markDirty(), which ALSO calls
-        // LocaleManager::clearCache() — so the deletion happens twice. Keep
-        // this call: it must run before the OPcache entries are invalidated
-        // (which needs the file list captured pre-deletion), and it keeps the
-        // apply correct even if a future core release stops clearing
-        // catalogues from markDirty() or markAssetsDirty() fails and is
-        // swallowed. The second deletion is a cheap no-op on an empty dir.
-        $this->clearLocaleCatalogues();
+        // The deletion itself is core's: markAssetsDirty() below calls
+        // markDirty(), which calls LocaleManager::clearCache(). Since core
+        // 2.0 a catalogue also carries a `.revision` sidecar that
+        // CatalogueCache compares per request, so an instance that never
+        // received a message works out for itself that its catalogue is stale
+        // — this apply is no longer what makes translations correct.
+        //
+        // What core does not do is tell OPcache. A catalogue is a PHP file
+        // Symfony rewrites at the same path, so a cached entry can shadow the
+        // new contents in this SAPI until the file's timestamp is re-checked.
+        // The list has to be captured before core unlinks the files, which is
+        // why this runs first.
+        $catalogues = $this->localeCatalogues();
 
         // Drop the shared settings cache as well: a concurrent refill that read the DB
         // just before the invalidating write can re-store a pre-change snapshot AFTER
@@ -120,44 +123,46 @@ class LocalCacheInvalidator
         // manifest from a boot-time snapshot (FileVersioner caches it per
         // instance) and silently revert every revision recorded since.
         $this->markAssetsDirty();
+
+        $this->invalidateOpcache($catalogues);
     }
 
     /**
-     * Delete the compiled locale catalogues and invalidate the OPcache entry of
-     * every PHP file among them in this SAPI.
+     * The compiled locale catalogues, as they stand before core deletes them.
      *
-     * This is why an apply is needed at all on a pod that did not perform the
-     * admin action. Symfony names a compiled catalogue
-     * `catalogue.<locale>.<hash>.php`, where the hash covers only
-     * `fallback_locales` — NOT the translated content — and
-     * ConfigCache::isFresh() short-circuits to `is_file()` whenever debug is
-     * off, which is every production install. So a catalogue that predates a
-     * newly-enabled extension is considered fresh forever, and deleting the
-     * file is the only thing that forces a rebuild from the YAML sources.
+     * Captured up front because the OPcache entries are keyed by path and the
+     * files are about to be unlinked — after that there is nothing left to
+     * enumerate.
      *
-     * The file list is captured BEFORE clearCache() unlinks it, and is globbed
-     * as broadly as clearCache() itself (which deletes `/*`) so that a
-     * `.php.meta` sibling or any future compiled artefact is covered too;
-     * opcache_invalidate() is only meaningful for the PHP files, so non-PHP
-     * entries are filtered out rather than glob-restricted, which would have
-     * silently narrowed what we invalidate if Symfony changed its naming.
-     *
-     * The invalidation is belt-and-braces: Symfony re-invalidates a catalogue
-     * when it rewrites it, and from the CLI subscriber the call is a no-op
-     * (opcache.enable_cli is off by default). It replaces the previous global
-     * opcache_reset(), which forced the whole php-fpm pool to recompile
-     * everything mid-traffic — far more disruptive than the staleness it
-     * guarded against.
+     * @return list<string>
      */
-    protected function clearLocaleCatalogues(): void
+    protected function localeCatalogues(): array
     {
-        $files = array_filter(
+        // Globbed as broadly as LocaleManager::clearCache() itself (which
+        // deletes `/*`) so a `.php.meta` sibling or any future compiled
+        // artefact is covered too; opcache_invalidate() is only meaningful
+        // for the PHP files, so non-PHP entries are filtered out rather than
+        // glob-restricted, which would silently narrow what we invalidate if
+        // Symfony changed its naming.
+        return array_values(array_filter(
             glob($this->paths->storage.'/locale/*') ?: [],
             fn (string $file) => str_ends_with($file, '.php')
-        );
+        ));
+    }
 
-        $this->locales->clearCache();
-
+    /**
+     * Invalidate the OPcache entry of each compiled catalogue in this SAPI.
+     *
+     * Belt-and-braces: Symfony re-invalidates a catalogue when it rewrites
+     * one, and from the CLI subscriber this is a no-op (opcache.enable_cli is
+     * off by default). It replaces an earlier global opcache_reset(), which
+     * forced the whole php-fpm pool to recompile everything mid-traffic — far
+     * more disruptive than the staleness it guarded against.
+     *
+     * @param list<string> $files
+     */
+    protected function invalidateOpcache(array $files): void
+    {
         if (!function_exists('opcache_invalidate')) {
             return;
         }

@@ -18,6 +18,7 @@ use Flarum\Extension\Event\Enabled;
 use Flarum\Extension\Extension;
 use Flarum\Foundation\Event\ClearingCache;
 use Flarum\Foundation\Paths;
+use Flarum\Locale\LocaleManager;
 use Flarum\Settings\Event\Saved;
 use Flarum\Settings\SettingsRepositoryInterface;
 use Flarum\Testing\integration\TestCase;
@@ -139,6 +140,50 @@ class PubSubCacheInvalidationTest extends TestCase
             $container->make('flarum.api_client.exclude_middleware'),
             'Internal API sub-requests must not re-run the epoch check'
         );
+    }
+
+    /**
+     * The catalogues are deleted by core, from markDirty() — this extension no
+     * longer deletes them itself, because since core 2.0 a catalogue carries a
+     * `.revision` sidecar that CatalogueCache compares per request, so a pod
+     * that never received a message detects staleness on its own.
+     *
+     * What core does not do is tell OPcache, and a catalogue is a PHP file
+     * Symfony rewrites at the same path. So the file list must still be
+     * captured before the deletion and handed to the OPcache pass — this is
+     * what asserts that ordering, which the apply test above cannot: it passes
+     * whether the deletion came from core or from here.
+     */
+    #[Test]
+    public function the_opcache_pass_sees_the_catalogues_captured_before_core_deleted_them()
+    {
+        $container = $this->app()->getContainer();
+
+        /** @var Paths $paths */
+        $paths = $container->make(Paths::class);
+
+        @mkdir($paths->storage.'/locale', 0777, true);
+        $catalogue = $paths->storage.'/locale/catalogue.en.sentinel.php';
+        file_put_contents($catalogue, '<?php return [];');
+
+        $invalidator = new class($container, $paths, $container->make(LocaleManager::class)) extends LocalCacheInvalidator {
+            /** @var list<string> */
+            public array $invalidated = [];
+
+            protected function invalidateOpcache(array $files): void
+            {
+                $this->invalidated = $files;
+            }
+        };
+
+        $invalidator->invalidate();
+
+        $this->assertContains(
+            $catalogue,
+            $invalidator->invalidated,
+            'The list captured before the deletion must reach the OPcache pass, or nothing is invalidated'
+        );
+        $this->assertFileDoesNotExist($catalogue, 'Core deletes the catalogue via markDirty()');
     }
 
     #[Test]
