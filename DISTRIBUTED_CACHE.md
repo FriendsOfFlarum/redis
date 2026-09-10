@@ -15,6 +15,8 @@ When cache-affecting admin actions run — clearing cache via admin panel or `ph
 
 This causes missing translations (raw `core.*` keys), stale assets, and other cache-related issues. Extension toggles and settings saves are especially insidious: Flarum core reacts to them with pod-local invalidation only and never dispatches `ClearingCache`, so without propagation the other pods stay stale until the next explicit cache clear.
 
+> **Not covered by propagation:** raw *English* core keys (`=> core.…`) appearing right after a catalogue rebuild are a separate Flarum core bug on 1.x — the hardcoded English fallback catalogue skips reference resolution when it is loaded implicitly (flarum/framework#5024; fixed in 2.x by #5023). Propagation cannot fix it, and because every pod now rebuilds its catalogues after an admin action, the bug can surface on any pod rather than only the acting one. Until core is patched, warm the English catalogue early in the request (`resolve('translator')->getCatalogue('en')`) from a site extender.
+
 ### The Solution
 
 **Automatic propagation using Redis Pub/Sub:**
@@ -36,10 +38,17 @@ This causes missing translations (raw `core.*` keys), stale assets, and other ca
 
 ### What Gets Invalidated
 
-- `storage/formatter/*` - TextFormatter cache
-- `storage/locale/*` - Symfony translation catalogues
-- `storage/views/*` - Blade view cache
-- In-memory Symfony translator catalogues
+An apply forgets cache entries rather than deleting the files they reference, with one exception (the locale catalogues):
+
+- the file cache (`storage/cache`) — on 1.x its only core tenant is the serialized TextFormatter entry; core's own `Formatter::flush()` forgets just that key
+- `storage/locale/*` — the compiled Symfony catalogues. These are the only files an apply deletes: their names are not content-derived, so nothing else would detect staleness. The deletion has the same microsecond window (`is_file()` → `include`) that core's own `Extend\Locales` has on the acting pod. Their OPcache entries are invalidated too, as belt-and-braces — Symfony re-invalidates a catalogue when it rewrites it, and from the CLI subscriber the call is a no-op
+- the shared settings cache (`flarum:settings`) and the resolved settings repository instance
+
+Deliberately **not** touched:
+
+- `storage/formatter/*` — the generated renderer classes. This matches core's own runtime refresh (`Formatter::flush()` and the Formatter extender only forget the cache entry; `cache:clear` sweeps the files). The renderer class is autoloaded from its file *during* `unserialize()`; deleting it while another request is unserializing the cached formatter (a microsecond window) leaves that request with an incomplete object, and a method call on it throws `\Error`, which core's render guard does not catch. Residual, stated plainly: the class name is a hash of the generated code, so a rebuild after a config-neutral toggle rewrites the *same* file in place, non-atomically, and every concurrent request that misses the cache rebuilds it (on a `storage/` volume shared between pods, from every pod) — OPcache normally serves the cached copy across that window
+- `storage/views/*` — core deletes these on the acting pod when an extension that registers views is toggled, but other pods have nothing to fix: compiled views are keyed by the resolved source path and expire by source mtime, so they can only be stale if a template *source* changed, which toggles and settings saves never do
+- the shared compiled frontend assets and `rev-manifest.json` — core flushes those itself, on the pod handling the admin action (a single actor, though each flush is a dozen or so sequential writes of the manifest)
 
 ## Architecture
 
@@ -57,7 +66,9 @@ This causes missing translations (raw `core.*` keys), stale assets, and other ca
 
 Pub/Sub itself has near-zero per-request overhead. The epoch backstop adds one Redis `GET` per request by default (sub-millisecond; this extension already performs a Redis GET per request for the settings cache). Set `check_interval` to throttle the check per pod — the throttle uses APCu when available; without APCu the check runs on every request regardless.
 
-The epoch record is written to `<flarum root>/cache-epoch-<hostname>-<sapi>` — the base path must be writable by the web user. If it is not, the backstop disables itself and logs a warning (it never loops). The hostname suffix keeps records per pod even when the install root is a shared volume; the SAPI suffix lets php-fpm perform its own apply (a CLI subscriber cannot reset php-fpm's OPcache).
+The epoch record is written to `<flarum root>/cache-epoch-<hostname>-<sapi>` — the base path must be writable by the web user. If it is not, the backstop disables itself and logs a warning (it never loops). The hostname suffix keeps records per pod even when the install root is a shared volume; the SAPI suffix lets php-fpm perform its own apply (OPcache is per process pool, so a CLI subscriber's invalidation does not reach php-fpm's). Now that the apply no longer resets OPcache globally, php-fpm's second apply buys little; collapsing the two is a possible follow-up.
+
+An apply itself is not free. It drops the serialized formatter, so the next post-rendering requests on that pod rebuild it (concurrently — there is no lock), and it deletes the compiled catalogues, so the next requests recompile them. Every settings save triggers a full apply on every pod, although core itself reacts to a non-theme save with nothing pod-local; narrowing the `Saved` apply to the settings-cache forget it actually needs is a planned follow-up.
 
 ## Configuration
 
@@ -158,11 +169,11 @@ Pub/sub alone is not safe here: delivery is asynchronous, so a request landing o
 **Safe now because:**
 1. The epoch is written to Redis before the message is published
 2. Each pod checks the epoch synchronously before serving a request and clears its local caches first when behind — a rebuild can no longer start from stale local state
-3. Applying an epoch also re-flushes the compiled assets, so anything poisoned inside the tiny remaining in-flight window is erased as pods catch up
+3. The shared compiled assets and their revision manifest are flushed **only by core, on the pod handling the admin action** — one actor, though each flush is a dozen or so sequential read-modify-writes of the manifest. This extension never touches them: an apply on every pod meant several more concurrent writers on `rev-manifest.json`, whose updates are non-atomic read-modify-writes — interleavings lose updates and leave a revision pointing at stale content, which browsers and CDNs then cache until the next admin action. This *reduces* the writer count (core's flush plus each pod's first rebuild, instead of that plus two applies per pod); the remaining race between core's flush and the first rebuilds is core's own and is not eliminated here
 4. Applying an epoch also drops the shared settings cache, so a pre-change snapshot re-stored by a racing refill lives milliseconds, not the full TTL
 5. Each pod applies independently and idempotently; concurrent workers on one pod are serialized by an atomic claim, and the applied epoch is recorded per pod (and per SAPI) so nothing is cleared twice
 
-**Residual window:** a request already past the epoch check when the invalidation lands can theoretically still write a stale asset after the last pod catches up. This is a tens-of-milliseconds sliver, and any later invalidation event heals it.
+**Residual window:** after core flushes the compiled assets on a toggle, the next request to render a page rebuilds them. If that request booted before the change was visible to it — just before the toggle, or while a racing refill's pre-change settings snapshot was still in Redis — it can bake the pre-change state into the shared asset, which then persists until the next admin action. The lazy rebuild is core's own 1.x behaviour (Flarum 2.x defers it to a freshly-booted request for exactly this reason); the pre-change settings snapshot is this extension's Redis settings layer, which is why the apply re-forgets it. Clicking *Clear Cache* once after a toggle rebuilds from a settled state. Making the manifest writes themselves atomic (a Redis-backed `VersionerInterface`, which core's `RevisionCompiler` accepts by injection) would remove the lost-update half of this; it is a candidate follow-up.
 
 ## Future Improvements
 

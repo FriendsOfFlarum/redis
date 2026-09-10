@@ -291,11 +291,11 @@ composer update fof/redis
 #### Why are there still files in storage/cache?
 
 Some code still relies on physical files being present. This includes:
-- **Formatter cache** (`storage/formatter/*`) - TextFormatter configuration
+- **Formatter cache** (`storage/formatter/*`) - TextFormatter's generated renderer classes
 - **Locale cache** (`storage/locale/*`) - Compiled Symfony translation catalogues
 - **View cache** (`storage/views/*`) - Compiled Blade templates
 
-These file caches can be synchronized across multiple instances using Redis Pub/Sub. See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
+When running several instances, a cache invalidation on one instance is propagated to the others (Redis Pub/Sub plus a per-request epoch check). A propagated invalidation forgets cache entries and deletes only the compiled locale catalogues; the formatter and view files are content- and mtime-keyed and are left in place. See [DISTRIBUTED_CACHE.md](DISTRIBUTED_CACHE.md) for details.
 
 #### Running multiple Flarum instances (horizontal scaling)?
 
