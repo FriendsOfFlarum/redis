@@ -93,6 +93,10 @@ return [
             // 0 (default) checks on every request — one Redis GET, sub-millisecond.
             'check_interval' => 0,
         ],
+        // Where compiled-asset revisions are stored (see "Asset revisions in
+        // Redis" below): 'auto' (default — Redis when pub/sub is enabled,
+        // otherwise core's rev-manifest.json), 'redis', or 'file'.
+        'asset_revisions' => 'auto',
     ]))
 ];
 ```
@@ -172,8 +176,27 @@ Pub/sub alone is not safe here: delivery is asynchronous, so a request landing o
 3. The shared compiled assets and their revision manifest are flushed **only by core, on the pod handling the admin action** — one actor, though each flush is a dozen or so sequential read-modify-writes of the manifest. This extension never touches them: an apply on every pod meant several more concurrent writers on `rev-manifest.json`, whose updates are non-atomic read-modify-writes — interleavings lose updates and leave a revision pointing at stale content, which browsers and CDNs then cache until the next admin action. This *reduces* the writer count (core's flush plus each pod's first rebuild, instead of that plus two applies per pod); the remaining race between core's flush and the first rebuilds is core's own and is not eliminated here
 4. Applying an epoch also drops the shared settings cache, so a pre-change snapshot re-stored by a racing refill lives milliseconds, not the full TTL
 5. Each pod applies independently and idempotently; concurrent workers on one pod are serialized by an atomic claim, and the applied epoch is recorded per pod (and per SAPI) so nothing is cleared twice
+6. With `asset_revisions` in Redis (the default when pub/sub is enabled), every revision write is a single atomic hash field, so concurrent writers — core's own flush on the acting pod and every pod's first rebuild — can no longer lose each other's updates (see below)
 
 **Residual window:** after core flushes the compiled assets on a toggle, the next request to render a page rebuilds them. If that request booted before the change was visible to it — just before the toggle, or while a racing refill's pre-change settings snapshot was still in Redis — it can bake the pre-change state into the shared asset, which then persists until the next admin action. The lazy rebuild is core's own 1.x behaviour (Flarum 2.x defers it to a freshly-booted request for exactly this reason); the pre-change settings snapshot is this extension's Redis settings layer, which is why the apply re-forgets it. Clicking *Clear Cache* once after a toggle rebuilds from a settled state. Making the manifest writes themselves atomic (a Redis-backed `VersionerInterface`, which core's `RevisionCompiler` accepts by injection) would remove the lost-update half of this; it is a candidate follow-up.
+
+### Asset revisions in Redis
+
+Core records which revision of each compiled asset is current in `rev-manifest.json`, next to the assets. Its `FileVersioner` updates that file with a **read-modify-write of the whole file**: read the JSON, change one key, write it all back. After an admin action several actors do that at once — core's flush on the acting pod is a dozen or so sequential writes (css, js and one locale css/js per locale, per frontend), and every pod's first render after the flush commits its own — so interleavings lose updates. Because `RevisionCompiler::getUrl()` only commits when a revision is *missing*, a lost update leaves a stale revision in place until the next admin action, and browsers and CDNs keep the stale URL. On assets stored on S3 each write is a network round trip, which makes the interleaving likely rather than exotic.
+
+Symptoms: an extension's settings page rendering empty right after enabling it (`admin.js` kept an old revision), a disable not reflected on the forum (`forum.js` did), or mixed states (`admin-de.js` advanced while `admin.js` did not).
+
+When pub/sub is enabled (or `'asset_revisions' => 'redis'` is set explicitly), this extension binds core's `VersionerInterface` to a Redis-backed versioner: the revisions live in one hash — `flarum:assets:revisions`, namespaced by the configured `prefix` like every other key on the cache connection — and every write is a single-field `HSET`/`HDEL`: atomic, no read-modify-write, nothing to lose. Core's `RevisionCompiler` accepts a versioner through the container, so **core's own flush uses it too**. Reads go to Redis on every call, like core's own versioner reads the manifest on every call (a handful of sub-millisecond `HGET`s per page render).
+
+What it does not change: the lazy rebuild-by-whoever-comes-next is core's design and stays; a request that booted before a toggle can still rebuild an asset from pre-change sources (see the residual window above).
+
+Operational notes:
+
+- **Requires the cache service.** The hash lives on the `fof.cache` connection; with `->disable(['cache'])` the setting has no effect and core's file stays in use.
+- **Split `connections` config:** in the "Completely separate the config array" form, `Configuration::for('cache')` uses the `connections.cache` block *instead of* the top level — so `asset_revisions` (like `pubsub` and `prefix`) must be placed **inside** `connections.cache`, or it is silently ignored.
+- **Switching over** is like a cache clear: the hash starts empty, so every asset is rebuilt once on its next request. `rev-manifest.json` is no longer read or written from then on — which means it **freezes**. If you ever switch back to `'file'`, run `php flarum cache:clear` right away: otherwise the frozen manifest hands out old `?v=` revisions for files whose contents have since changed, and browsers and CDNs keep serving the old bytes until the next admin action.
+- `php flarum cache:clear` (and the admin panel's *Clear Cache*) flush the cache connection's database (`FLUSHDB`) before core flushes the assets, which also empties the hash — the intended "rebuild everything" outcome of a cache clear. Under an `allkeys-*` eviction policy Redis may also evict the hash under memory pressure; the effect is the same as a cache clear (every asset rebuilt once).
+- **Errors are not swallowed.** A Redis error while reading or writing a revision surfaces as an error page, exactly like a storage error in core's own `FileVersioner` — and like the cache, settings and session stores this extension already puts on Redis. That is deliberate: a read failure reported as "no revision" would make core recompile on every request and then render pages without any CSS or JS, and a write failure reported as success would leave a stale revision in place with nothing to trigger a retry.
 
 ## Future Improvements
 
