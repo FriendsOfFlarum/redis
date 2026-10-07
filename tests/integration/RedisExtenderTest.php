@@ -40,7 +40,7 @@ class RedisExtenderTest extends TestCase
      */
     protected function adminSources(string $type): array
     {
-        $collector = new class extends SourceCollector {
+        $collector = new class() extends SourceCollector {
             /** @var string[] */
             public array $recorded = [];
 

@@ -75,7 +75,7 @@ class Redis implements ExtenderInterface
             // (a consumer listing it twice, or a test re-registering it with
             // different config). Each application would add the admin assets
             // again, and RouteCollection::addRoute() throws on a duplicate name.
-            if (! $container->bound('fof.redis.admin')) {
+            if (!$container->bound('fof.redis.admin')) {
                 $container->instance('fof.redis.admin', true);
 
                 $this->registerAdminJs($container);
