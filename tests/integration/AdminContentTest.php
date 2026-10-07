@@ -13,8 +13,9 @@
 
 namespace FoF\Redis\Tests\integration;
 
-use Flarum\Testing\integration\RetrievesAuthorizedUsers;
+use Flarum\Frontend\Document;
 use Flarum\Testing\integration\TestCase;
+use FoF\Redis\Content\AdminContent;
 use PHPUnit\Framework\Attributes\Test;
 
 /**
@@ -24,7 +25,6 @@ use PHPUnit\Framework\Attributes\Test;
 class AdminContentTest extends TestCase
 {
     use RedisTestConfig;
-    use RetrievesAuthorizedUsers;
 
     protected function tearDown(): void
     {
@@ -33,15 +33,18 @@ class AdminContentTest extends TestCase
         parent::tearDown();
     }
 
+    /**
+     * What AdminContent adds to the admin page's payload. Called directly:
+     * rendering the page would compile the admin JS, and `js/dist` isn't built
+     * until after a change is merged.
+     */
     protected function adminPayload(): array
     {
-        $response = $this->send($this->request('GET', '/admin', ['authenticatedAs' => 1]));
+        $document = $this->createStub(Document::class);
 
-        $this->assertEquals(200, $response->getStatusCode());
+        $this->app()->getContainer()->make(AdminContent::class)($document, $this->request('GET', '/admin'));
 
-        preg_match('#<script id="flarum-json-payload" type="application/json">(.*?)</script>#s', (string) $response->getBody(), $matches);
-
-        return json_decode($matches[1] ?? '{}', true);
+        return $document->payload;
     }
 
     #[Test]
