@@ -1,0 +1,24 @@
+{
+  "name": "@fof/redis",
+  "version": "0.0.0",
+  "private": true,
+  "prettier": "@flarum/prettier-config",
+  "devDependencies": {
+    "@flarum/prettier-config": "^1.0.0",
+    "flarum-tsconfig": "^2.0.0",
+    "flarum-webpack-config": "^3.0.0",
+    "prettier": "^3.0.3",
+    "typescript": "^5.9.3",
+    "webpack": "^5.104.1",
+    "webpack-cli": "^5.1.4"
+  },
+  "scripts": {
+    "dev": "webpack --mode development --watch",
+    "build": "webpack --mode production",
+    "format": "prettier --write src",
+    "format-check": "prettier --check src",
+    "clean-typings": "npx rimraf dist-typings && mkdir dist-typings",
+    "build-typings": "npm run clean-typings && tsc",
+    "check-typings": "tsc --noEmit --emitDeclarationOnly false"
+  }
+}

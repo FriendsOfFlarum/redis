@@ -310,6 +310,18 @@ jobs until they are retried or deleted. Because these entries carry a TTL, they 
 eviction first under a `volatile-*` `maxmemory-policy`, so a memory-constrained Redis reclaims old failure
 records before touching live queue jobs.
 
+### Admin dashboard
+
+With any of the services enabled, the admin panel shows what is running:
+
+- The **status widget** lists the store and its version, for example `Valkey 9.0.1` or `Redis 7.2.4`.
+- The **dashboard** has a card for the store, headed with its name and version. It shows memory used (and
+  its share of `maxmemory`), peak and maximum memory, the eviction policy, operations per second, and
+  connected and blocked clients. Use its refresh button for a new reading.
+
+The card warns when memory use passes 75% of `maxmemory` under a policy that can evict keys, since queue
+data may then be evicted.
+
 ### Migrating from `blomstra/flarum-redis`
 
 Simply update the namespace used in your `extend.php` file from `Blomstra\Redis...` to `FoF\Redis...`

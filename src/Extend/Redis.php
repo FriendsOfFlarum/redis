@@ -15,10 +15,17 @@ namespace FoF\Redis\Extend;
 
 use Flarum\Extend\Console;
 use Flarum\Extend\ExtenderInterface;
+use Flarum\Extend\Frontend;
+use Flarum\Extend\Locales;
+use Flarum\Extend\Routes;
 use Flarum\Extension\Extension;
+use Flarum\Frontend\Assets;
+use Flarum\Frontend\Compiler\Source\SourceCollector;
+use FoF\Redis\Api\Stats;
 use FoF\Redis\Configuration;
 use FoF\Redis\Console\CacheSubscribeCommand;
 use FoF\Redis\Console\RedisInfoCommand;
+use FoF\Redis\Content\AdminContent;
 use Illuminate\Contracts\Container\Container;
 
 /**
@@ -31,6 +38,23 @@ class Redis implements ExtenderInterface
     public function __construct(array $config)
     {
         $this->configuration = Configuration::make($config);
+    }
+
+    /**
+     * Applied from a site's extend.php there is no extension, so core's
+     * Frontend extender would name the module `site-custom`: the slot the
+     * site's own admin JS uses, where whichever loads second replaces the
+     * other's exports. This is core's wrapper under a name of our own.
+     */
+    protected function registerAdminJs(Container $container): void
+    {
+        $container->resolving('flarum.assets.admin', function (Assets $assets) {
+            $assets->js(function (SourceCollector $sources) {
+                $sources->addString(fn () => 'var module={};');
+                $sources->addFile(dirname(__DIR__, 2).'/js/dist/admin.js');
+                $sources->addString(fn () => "flarum.extensions['fof-redis']=module.exports;");
+            });
+        });
     }
 
     public function extend(Container $container, ?Extension $extension = null): void
@@ -46,6 +70,28 @@ class Redis implements ExtenderInterface
             (new Console())
                 ->command(RedisInfoCommand::class)
                 ->extend($container, $extension);
+
+            // Once per container: the extender may be applied more than once
+            // (a consumer listing it twice, or a test re-registering it with
+            // different config). Each application would add the admin assets
+            // again, and RouteCollection::addRoute() throws on a duplicate name.
+            if (!$container->bound('fof.redis.admin')) {
+                $container->instance('fof.redis.admin', true);
+
+                $this->registerAdminJs($container);
+
+                (new Frontend('admin'))
+                    ->css(dirname(__DIR__, 2).'/resources/less/admin.less')
+                    ->content(AdminContent::class)
+                    ->extend($container, $extension);
+
+                (new Locales(dirname(__DIR__, 2).'/resources/locale'))
+                    ->extend($container, $extension);
+
+                (new Routes('admin'))
+                    ->get('/redis/api/stats', 'fof-redis.stats', Stats::class)
+                    ->extend($container, $extension);
+            }
         }
 
         if (array_key_exists('cache', $services)) {

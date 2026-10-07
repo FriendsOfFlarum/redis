@@ -1,0 +1,26 @@
+fof-redis:
+  admin:
+    stats:
+      kv_heading: Key-Value Store
+      refresh_button: Refresh
+      eviction_pressure: memory pressure
+      eviction_policy_tooltip: >-
+        The eviction policy is how the store selects what to remove when the
+        maxmemory limit is reached. The default is `noeviction`: new values
+        aren't saved when the memory limit is reached. Click to view
+        documentation.
+      eviction_warning: >-
+        Memory usage is at {usage}% of maxmemory and the eviction policy is
+        "{policy}", so keys — potentially including queue data — may be
+        evicted soon. Increase maxmemory or move the queue to a dedicated
+        database with more headroom.
+      error:
+        fetch_failed: Unable to fetch Redis statistics. Please check your Redis configuration.
+      data:
+        memory-used: Memory Used
+        memory-peak: Memory Peak
+        memory-max: Max Memory
+        ops-per-sec: Ops Per Second
+        connected-clients: Connected Clients
+        blocked-clients: Blocked Clients
+        eviction-policy: Eviction Policy
