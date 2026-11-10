@@ -191,8 +191,15 @@ class Cache extends Provider
         ];
     }
 
-    private function startSubscriber(Container $container, array $pubSubConfig): void
+    private function startSubscriber(Container $container, array $pubSubConfig, string $sapi = PHP_SAPI): void
     {
+        // Only a CLI process can spawn the subscriber: under PHP-FPM or CGI,
+        // PHP_BINARY is the server binary, which cannot run `flarum cache:subscribe`.
+        // The scheduler's per-minute `php flarum schedule:run` starts it instead.
+        if ($sapi !== 'cli') {
+            return;
+        }
+
         $paths = $container->make(Paths::class);
         $logger = $container->make(LoggerInterface::class);
 

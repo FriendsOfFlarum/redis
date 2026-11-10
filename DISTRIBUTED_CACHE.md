@@ -103,6 +103,7 @@ return [
 - fof/redis installed and configured
 - Redis connection available
 - Multiple Flarum instances
+- With `autostart`: Flarum's scheduler cron on each instance (see [Pub/Sub](#pubsub)); with a process manager running `php flarum cache:subscribe` instead, `autostart` off
 
 ### No Additional Requirements
 - No special PHP extensions needed
@@ -155,6 +156,19 @@ php flarum tinker
 ### Pub/Sub
 
 Pub/Sub provides near real-time cache invalidation across all containers. It requires a long-running subscriber process, which can be auto-started via configuration.
+
+With `autostart`, a `php flarum` command (normally the scheduler's per-minute `php flarum schedule:run` cron) starts the subscriber when none is running. Web requests never start it: under PHP-FPM or CGI, PHP's own binary is the server binary, which cannot run `flarum cache:subscribe`. So set up [Flarum's scheduler](https://docs.flarum.org/scheduler) on each instance, or run `php flarum cache:subscribe` under your process manager.
+
+If a process manager runs the subscriber, turn `autostart` off:
+
+```php
+'pubsub' => [
+    'enabled' => true,
+    'autostart' => false,
+],
+```
+
+With `autostart` still on, any `php flarum` command (an entrypoint's `migrate`, the scheduler) can start a subscriber first, outside the process manager. The supervised `cache:subscribe` then finds it running and exits at once, and a process manager such as supervisord stops restarting a program that keeps exiting. Keep `enabled` set: without `autostart`, it is what turns pub/sub on.
 
 ### Why both push and pull?
 
